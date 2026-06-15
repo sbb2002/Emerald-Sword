@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh issue *)",
+      "Bash(gh repo *)",
+      "PowerShell(python -m pytest 2>&1; if \\(-not $?\\) { \"PYTEST_MISSING_OR_FAILED\" })",
+      "PowerShell(python -m pytest)",
+      "PowerShell(python -c \"import yaml, io; d=yaml.safe_load\\(io.open\\('render.yaml',encoding='utf-8'\\)\\); svc=[s['type']+':'+s['name'] for s in d['services']]; print\\('render.yaml OK ->', svc, '| groups:', [g['name'] for g in d['envVarGroups']]\\)\")",
+      "PowerShell(git push *)",
+      "PowerShell(gh pr *)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(python -m pytest -q)",
+      "PowerShell(git *)",
+      "PowerShell(git ls-remote *)",
+      "PowerShell(git add *)"
+    ]
+  }
+}

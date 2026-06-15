@@ -50,3 +50,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 스킬 실행 가이드
 
 이슈 작업 시 `.skills/` 폴더 내 해당 `*.md` 스킬을 먼저 읽은 후 절차에 따라 즉시 작업을 시작한다. 설명·다짐·가치 검토 문장 없이 파일 스캔 및 수정을 바로 수행한다.
+
+스킬은 `.claudecode/commands/` 에 슬래시 명령어로 등록되어 있다.
+
+| 슬래시 명령어 | 설명 |
+|---|---|
+| `/caveman` | 초간단 요약 모드로 응답. `[lite\|full\|ultra]` 옵션 지원 |
+| `/combo-plan` | 기획→PRD→이슈를 자동으로 한 번에 실행하는 복합 스킬 |
+| `/combo-run` | pre-flight-check → 작업 → syntax-gate → post-patch-diff를 순서대로 실행 |
+| `/get-issued` | 작업 진행도를 요약해 GitHub issues에 올림 |
+| `/grill-me` | 기획 아이디어를 강도 높게 검증하는 소크라테스식 문답 |
+| `/handoff` | 현재 작업 상태를 다음 세션/에이전트가 이어받을 수 있도록 핸드오프 문서 작성 |
+| `/improve-codebase` | 코드베이스 아키텍처 개선 기회를 탐색하고 리팩터링 후보 도출 |
+| `/intent-first-viz` | 프로젝트를 시각화하기 전 의도를 명확히 정의하고, 적합한 시각화 방법을 추천 |
+| `/post-patch-diff` | 작업 완료 후 "예상한 파일 vs 실제 변경 파일" 대조 검토 |
+| `/pre-flight-check` | 작업 실행 전 변경될 파일 범위를 예측하고 위험 요소 사전 파악 |
+| `/syntax-gate` | 코드 생성/수정 직후 문법·런타임 오류를 정적으로 차단 |
+| `/to-issues` | 계획·명세·PRD를 수직 슬라이스 단위의 GitHub 이슈로 세분화 |
+| `/to-kickoff` | 프로젝트 시작 아이디어를 킥오프 문서와 PRD로 변환 |
+| `/to-prd` | 현재까지의 논의와 코드베이스를 바탕으로 PRD 작성 |

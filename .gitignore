@@ -27,5 +27,6 @@ Thumbs.db
 .idea/
 .vscode/
 
-# ===== Claude Code 로컬 설정 =====
-.claude/settings.local.json
+# ===== Claude Code =====
+# .claude/settings.local.json 은 멀티-로컬 환경 동기화를 위해 의도적으로 추적한다.
+# (권한 허용 목록만 포함 — 비밀값 없음. 비밀값은 절대 여기에 두지 말 것)
