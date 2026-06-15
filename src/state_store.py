@@ -6,6 +6,8 @@ Phase A 범위: is_paused, trading_mode 읽기/쓰기.
 """
 from __future__ import annotations
 
+from typing import Optional
+
 from .db import get_connection
 
 VALID_MODES = ("virtual", "real")
@@ -46,3 +48,43 @@ class StateStore:
                     "UPDATE bot_state SET trading_mode = %s, updated_at = now() WHERE id = 1;",
                     (mode,),
                 )
+
+    # ----- 마지막 신호 (last_signal) -----
+    def get_last_signal(self) -> Optional[str]:
+        with get_connection(self._database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT signal FROM last_signal WHERE id = 1;")
+                row = cur.fetchone()
+        return row[0] if row and row[0] else None
+
+    def set_last_signal(self, signal: str, score_nasdaq: float, score_gold: float) -> None:
+        with get_connection(self._database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE last_signal SET signal=%s, score_nasdaq=%s, score_gold=%s, computed_at=now()"
+                    " WHERE id = 1;",
+                    (signal, score_nasdaq, score_gold),
+                )
+
+    # ----- 거래 로그 (trade_log) -----
+    def record_trade(
+        self,
+        *,
+        mode: str,
+        signal: str,
+        legs,
+        balance_before=None,
+        balance_after=None,
+        reason: str = "monthly_signal",
+    ) -> None:
+        with get_connection(self._database_url) as conn:
+            with conn.cursor() as cur:
+                for leg in legs:
+                    if not getattr(leg, "placed", False):
+                        continue
+                    cur.execute(
+                        "INSERT INTO trade_log"
+                        " (mode, signal, side, ticker, quantity, reason, balance_before, balance_after)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s);",
+                        (mode, signal, leg.side, leg.symbol, leg.quantity, reason, balance_before, balance_after),
+                    )
