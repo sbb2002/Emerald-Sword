@@ -1,0 +1,31 @@
+# ===== 비밀값 (CLAUDE.md 절대 규칙 1: 코드·git 평문 금지) =====
+.env
+.env.*
+!.env.example
+*.token
+*.token.json
+token_cache.json
+.kis_token*
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+build/
+dist/
+
+# ===== OS / IDE =====
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ===== Claude Code 로컬 설정 =====
+.claude/settings.local.json

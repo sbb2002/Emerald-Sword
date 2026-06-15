@@ -1,0 +1,55 @@
+# Render Blueprint — web service + cron job (같은 레포, 같은 Neon DB 공유)
+# 비밀값은 envVarGroup 으로 묶어 Render 대시보드에서 1회 입력한다(코드·git 평문 금지).
+# 두 서비스는 직접 통신하지 않고 Neon DB(is_paused 등)로만 협력한다.
+
+envVarGroups:
+  - name: emerald-sword-secrets
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: KIS_APP_KEY
+        sync: false
+      - key: KIS_APP_SECRET
+        sync: false
+      - key: KIS_CANO_REAL
+        sync: false
+      - key: KIS_CANO_PAPER
+        sync: false
+      - key: KIS_ACNT_PRDT_CD
+        sync: false
+      - key: KIS_BASE_URL_REAL
+        sync: false
+      - key: KIS_BASE_URL_PAPER
+        sync: false
+
+services:
+  # 상시 구동: 텔레그램 webhook 수신 + 명령 처리 + /healthcheck (매매 안 함)
+  - type: web
+    name: emerald-sword-web
+    runtime: python
+    plan: free
+    region: singapore
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn src.web:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /healthcheck
+    autoDeploy: true
+    envVars:
+      - fromGroup: emerald-sword-secrets
+
+  # 월 1회: 모멘텀 계산·주문 (Phase B). Phase A 스텁은 is_paused 읽고 보고 후 종료.
+  - type: cron
+    name: emerald-sword-cron
+    runtime: python
+    plan: free
+    region: singapore
+    # Phase A 스텁 스케줄: 월말 근사(28~31일) 매일 UTC 15:30 = KST 00:30 실행.
+    # Phase B(#8)에서 "월 마지막 거래일 + 미국 썸머타임" 게이트로 교체한다.
+    schedule: "30 15 28-31 * *"
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m src.cron
+    envVars:
+      - fromGroup: emerald-sword-secrets
