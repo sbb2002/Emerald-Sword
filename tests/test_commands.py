@@ -1,6 +1,24 @@
-"""CommandRouter — 조회 명령(#11: /status /signal /log) + /help 검증."""
-from src.commands import HELP_TEXT
+"""CommandRouter — 조회/통제/모드/긴급정지 명령 검증."""
+from src.commands import CommandDeps, CommandRouter, HELP_TEXT
+from src.mode_manager import ModeManager
 from src.state_store import TradeRecord
+from src.telegram_bot import TelegramBot
+
+from tests.conftest import fake_signal, fake_status
+
+
+def _router_with_code(store, code="135790"):
+    """고정 챌린지 코드로 라우터를 만든다(/real·/emergency-stop 결정적 테스트용)."""
+    return CommandRouter(CommandDeps(
+        store=store,
+        status_provider=fake_status,
+        signal_provider=fake_signal,
+        code_gen=lambda: code,
+    ))
+
+
+def _update(chat_id, text):
+    return {"message": {"chat": {"id": chat_id}, "text": text}}
 
 
 def test_help_lists_all_commands(router):
@@ -116,3 +134,56 @@ def test_new_command_during_pending_aborts_confirmation(router, store):
     assert store.is_paused() is False
     # 펜딩이 폐기됐으므로 이후 "y" 는 일반 명령(미지)으로 처리
     assert "알 수 없는 명령" in router.handle("y", 42)
+
+
+# ----- 모드 전환 (#13) -----
+
+def test_virtual_confirm_switches_mode(store):
+    store.set_trading_mode("real")
+    r = _router_with_code(store)
+    assert "(y/n)" in r.handle("/virtual", 42)
+    out = r.handle("y", 42)
+    assert store.get_trading_mode() == "virtual"
+    assert "모의투자" in out
+
+
+def test_virtual_when_already_virtual(store):
+    r = _router_with_code(store)            # 기본 virtual
+    assert "이미 모의투자" in r.handle("/virtual", 42)
+
+
+def test_real_switches_on_correct_code(store):
+    store.set_trading_mode("virtual")
+    r = _router_with_code(store, code="246813")
+    out1 = r.handle("/real", 42)
+    assert "246813" in out1
+    assert "실제 자금" in out1
+    out2 = r.handle("246813", 42)
+    assert store.get_trading_mode() == "real"
+    assert "실전" in out2
+
+
+def test_real_rejects_wrong_code(store):
+    store.set_trading_mode("virtual")
+    r = _router_with_code(store, code="246813")
+    r.handle("/real", 42)
+    out = r.handle("000000", 42)
+    assert store.get_trading_mode() == "virtual"  # 변경 없음
+    assert "일치하지 않" in out
+
+
+def test_real_when_already_real(store):
+    store.set_trading_mode("real")
+    r = _router_with_code(store)
+    assert "이미 실전" in r.handle("/real", 42)
+
+
+def test_mode_tag_reflects_switch_immediately(store, sender):
+    store.set_trading_mode("virtual")
+    r = _router_with_code(store, code="111111")
+    bot = TelegramBot(42, ModeManager(store), sender, store=store, router=r)
+    bot.handle_update(_update(42, "/real"))
+    bot.handle_update(_update(42, "111111"))
+    # 전환 확인 메시지부터 [실전] 태그로 발신돼야 한다(모드 우선 갱신)
+    assert sender.sent[-1][1].startswith("[실전]")
+    assert store.get_trading_mode() == "real"

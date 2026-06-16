@@ -11,6 +11,7 @@ Phase A 의 무상태 dispatch() 를 CommandRouter 로 대체한다.
 """
 from __future__ import annotations
 
+import secrets
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -38,11 +39,17 @@ class StatusView:
     server_ok: bool
 
 
+def _default_code() -> str:
+    """6자리 확인 코드(실전 전환·비상정지 챌린지용). 추측 방지를 위해 secrets 사용."""
+    return f"{secrets.randbelow(900_000) + 100_000}"
+
+
 @dataclass
 class CommandDeps:
     store: Any                                            # is_paused/set_paused/get·set_trading_mode/read_trades/record_trade/get_last_signal
     status_provider: Optional[Callable[[], StatusView]] = None
     signal_provider: Optional[Callable[[], Any]] = None   # -> SignalResult(target, score_nasdaq, score_gold)
+    code_gen: Callable[[], str] = _default_code           # 챌린지 코드 생성(테스트는 고정값 주입)
 
 
 def _fmt_money(value: float) -> str:
@@ -87,6 +94,10 @@ class CommandRouter:
     def _answer_pending(self, pending: _Pending, text: str, chat_id: int) -> str:
         if pending.kind == "pause_confirm":
             return self._on_pause_confirm(text)
+        if pending.kind == "virtual_confirm":
+            return self._on_virtual_confirm(text)
+        if pending.kind == "real_challenge":
+            return self._on_real_challenge(pending, text)
         return self._command(text, chat_id)  # 알 수 없는 펜딩 — 안전 폴백
 
     # ----- 명령 디스패치 -----
@@ -104,6 +115,10 @@ class CommandRouter:
             return self._pause(chat_id)
         if cmd == "/resume":
             return self._resume()
+        if cmd == "/virtual":
+            return self._virtual(chat_id)
+        if cmd == "/real":
+            return self._real(chat_id)
         return f"알 수 없는 명령입니다: {text!r}\n\n{HELP_TEXT}"
 
     # ----- 조회 (#11) -----
@@ -177,3 +192,33 @@ class CommandRouter:
             return "이미 작동 중입니다."
         self._deps.store.set_paused(False)
         return "▶️ 자동거래를 재개했습니다."
+
+    # ----- 모드 전환 (#13) -----
+    def _virtual(self, chat_id: int) -> str:
+        if self._deps.store.get_trading_mode() == "virtual":
+            return "이미 모의투자 모드입니다."
+        self._pending[chat_id] = _Pending(kind="virtual_confirm")
+        return "모의투자 모드로 전환할까요? (y/n)"
+
+    def _on_virtual_confirm(self, text: str) -> str:
+        if not _is_yes(text):
+            return "모드 전환을 취소했습니다."
+        self._deps.store.set_trading_mode("virtual")
+        return "🧪 모의투자 모드로 전환했습니다."
+
+    def _real(self, chat_id: int) -> str:
+        if self._deps.store.get_trading_mode() == "real":
+            return "이미 실전 모드입니다."
+        code = self._deps.code_gen()
+        self._pending[chat_id] = _Pending(kind="real_challenge", code=code)
+        return (
+            "⚠️ 실전 계좌로 전환합니다. 실제 자금이 거래됩니다.\n"
+            f"   확인하려면 다음 코드를 그대로 입력하세요: {code}"
+        )
+
+    def _on_real_challenge(self, pending: _Pending, text: str) -> str:
+        if text.strip() != pending.code:
+            return "코드가 일치하지 않습니다. 실전 전환을 취소했습니다. (모드 변경 없음)"
+        # 모드를 먼저 갱신 → 이 확인 메시지부터 send_message 가 [실전] 태그로 발신.
+        self._deps.store.set_trading_mode("real")
+        return "🔴 실전 모드로 전환했습니다. 실제 자금이 거래됩니다."
