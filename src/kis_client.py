@@ -60,7 +60,8 @@ class HttpKisClient:
         cano: str,
         acnt_prdt_cd: str,
         mode: str,
-        timeout: float = 30.0,  # KIS 가 해외(Render 싱가포르)에서 느릴 수 있어 여유. 토큰 ReadTimeout 대응.
+        timeout: float = 30.0,       # KIS 가 해외(Render 싱가포르)에서 느릴 수 있어 여유. 토큰 ReadTimeout 대응.
+        min_interval: float = 1.1,   # 호출 사이 최소 간격 — KIS 초당 호출 제한(1/sec) 회피
     ) -> None:
         self._app_key = app_key
         self._app_secret = app_secret
@@ -72,19 +73,41 @@ class HttpKisClient:
         self._token: Optional[str] = None
         self._balance: Optional[dict] = None   # inquire-balance 응답 캐시(holdings/cash 가 공유)
         self._balance_at: float = 0.0
+        self._min_interval = min_interval
+        self._last_call_at: float = 0.0
+
+    def _throttle(self) -> None:
+        """직전 호출과 최소 간격을 보장한다(KIS 초당 호출 제한 회피)."""
+        wait = self._min_interval - (time.time() - self._last_call_at)
+        if wait > 0:
+            time.sleep(wait)
+        self._last_call_at = time.time()
+
+    def _send(self, method: str, url: str, **kwargs):
+        """모든 KIS HTTP 호출의 단일 통로 — throttle + 5xx 시 재시도(초당 제한·일시 500 대응)."""
+        kwargs.setdefault("timeout", self._timeout)
+        resp = None
+        for attempt in range(3):
+            self._throttle()
+            resp = httpx.request(method, url, **kwargs)
+            if resp.status_code < 500:
+                return resp
+            logger.warning("KIS %s %s → %s, 재시도(%d/2)",
+                           method, url.rsplit("/", 1)[-1].split("?")[0], resp.status_code, attempt + 1)
+        return resp  # 마지막 응답 — 호출부의 raise_for_status 가 처리
 
     # ----- 인증 -----
     def issue_token(self) -> TokenInfo:
         logger.info("KIS 토큰 발급 요청: %s/oauth2/tokenP (mode=%s, timeout=%ss)",
                     self._base, self._mode, self._timeout)
-        resp = httpx.post(
+        resp = self._send(
+            "POST",
             f"{self._base}/oauth2/tokenP",
             json={
                 "grant_type": "client_credentials",
                 "appkey": self._app_key,
                 "appsecret": self._app_secret,
             },
-            timeout=self._timeout,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -111,7 +134,8 @@ class HttpKisClient:
         now = time.time()
         if self._balance is not None and (now - self._balance_at) < 3.0:
             return self._balance
-        resp = httpx.get(
+        resp = self._send(
+            "GET",
             f"{self._base}/uapi/overseas-stock/v1/trading/inquire-balance",
             headers=self._headers(_TR[self._mode]["balance"]),
             params={
@@ -122,7 +146,6 @@ class HttpKisClient:
                 "CTX_AREA_FK200": "",
                 "CTX_AREA_NK200": "",
             },
-            timeout=self._timeout,
         )
         resp.raise_for_status()
         self._balance = resp.json()
@@ -152,11 +175,11 @@ class HttpKisClient:
 
     def get_price(self, symbol: str) -> float:
         for excd in _QUOTE_EXCD.get(symbol, _DEFAULT_QUOTE_EXCD):
-            resp = httpx.get(
+            resp = self._send(
+                "GET",
                 f"{self._base}/uapi/overseas-price/v1/quotations/price",
                 headers=self._headers(_PRICE_TR),
                 params={"AUTH": "", "EXCD": excd, "SYMB": symbol},
-                timeout=self._timeout,
             )
             resp.raise_for_status()
             price = float(resp.json().get("output", {}).get("last") or 0)
@@ -170,11 +193,11 @@ class HttpKisClient:
         rows: list = []
         used = ""
         for excd in _QUOTE_EXCD.get(symbol, _DEFAULT_QUOTE_EXCD):
-            resp = httpx.get(
+            resp = self._send(
+                "GET",
                 f"{self._base}/uapi/overseas-price/v1/quotations/dailyprice",
                 headers=self._headers(_DAILY_TR),
                 params={"AUTH": "", "EXCD": excd, "SYMB": symbol, "GUBN": "2", "BYMD": "", "MODP": "1"},
-                timeout=self._timeout,
             )
             resp.raise_for_status()
             rows = resp.json().get("output2", []) or []
@@ -193,7 +216,8 @@ class HttpKisClient:
     def place_order(self, symbol: str, side: str, quantity: int) -> OrderResult:
         self._balance = None  # 주문 후 잔고 변동 → 캐시 무효화
         tr = _TR[self._mode]["buy" if side == "BUY" else "sell"]
-        resp = httpx.post(
+        resp = self._send(
+            "POST",
             f"{self._base}/uapi/overseas-stock/v1/trading/order",
             headers=self._headers(tr),
             json={
@@ -205,7 +229,6 @@ class HttpKisClient:
                 "OVRS_ORD_UNPR": "0",  # 0 = 시장가 성격(라이브에서 주문구분 확인)
                 "ORD_SVR_DVSN_CD": "0",
             },
-            timeout=self._timeout,
         )
         resp.raise_for_status()
         data = resp.json()
@@ -218,7 +241,8 @@ class HttpKisClient:
         )
 
     def get_open_orders(self) -> list:
-        resp = httpx.get(
+        resp = self._send(
+            "GET",
             f"{self._base}/uapi/overseas-stock/v1/trading/inquire-nccs",
             headers=self._headers(_TR[self._mode]["open_orders"]),
             params={
@@ -229,7 +253,6 @@ class HttpKisClient:
                 "CTX_AREA_FK200": "",
                 "CTX_AREA_NK200": "",
             },
-            timeout=self._timeout,
         )
         resp.raise_for_status()
         out = []
