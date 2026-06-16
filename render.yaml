@@ -27,7 +27,7 @@ envVarGroups:
         sync: false
 
 services:
-  # 상시 구동: 텔레그램 webhook 수신 + 명령 처리 + /healthcheck (매매 안 함)
+  # 텔레그램 webhook 수신 + 명령 처리 (매매 안 함). 유휴 시 spin-down 허용(무료 시간 절약).
   - type: web
     name: emerald-sword-web
     runtime: python
@@ -35,7 +35,10 @@ services:
     region: singapore
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn src.web:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /healthcheck
+    # healthCheckPath 미설정 — 설정하면 Render 가 /healthcheck 를 주기적으로 폴링해
+    # 서비스가 계속 깨어 있어 무료 시간(~750h/월)을 소진한다. 폴링을 막아 유휴 시
+    # spin-down 되게 한다(배포 성공은 포트 바인딩으로 감지). /healthcheck 엔드포인트는
+    # 수동 확인용으로 코드에는 유지한다.
     autoDeploy: true
     envVars:
       - fromGroup: emerald-sword-secrets
