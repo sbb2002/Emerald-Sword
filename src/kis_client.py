@@ -38,8 +38,10 @@ _TR = {
 }
 _PRICE_TR = "HHDFS00000300"
 _DAILY_TR = "HHDFS76240000"
-# 주문·잔고용 거래소(OVRS_EXCG_CD, 4자리). QQQM=NASD, GLDM=AMEX(NYSE Arca) — 라이브 주문 시 종목별 적용 필요.
+# 주문·잔고용 거래소(OVRS_EXCG_CD, 4자리). 잔고/미체결 조회는 _EXCG(대표값) 사용(라이브 검증됨).
 _EXCG = "NASD"
+# 주문(place_order)은 종목별 거래소로. QQQM=NASD(나스닥), GLDM=AMEX(NYSE Arca).
+_TRADE_EXCG = {"QQQM": "NASD", "GLDM": "AMEX"}
 # 시세용 거래소(EXCD, 3자리 — 주문용과 코드 체계가 다름!). 거래소 분류 불확실성 대비 후보를 순서대로 시도.
 _QUOTE_EXCD = {
     "QQQM": ("NAS",),          # 나스닥
@@ -197,7 +199,7 @@ class HttpKisClient:
             json={
                 "CANO": self._cano,
                 "ACNT_PRDT_CD": self._acnt_prdt_cd,
-                "OVRS_EXCG_CD": _EXCG,
+                "OVRS_EXCG_CD": _TRADE_EXCG.get(symbol, _EXCG),
                 "PDNO": symbol,
                 "ORD_QTY": str(int(quantity)),
                 "OVRS_ORD_UNPR": "0",  # 0 = 시장가 성격(라이브에서 주문구분 확인)
