@@ -12,6 +12,7 @@ Phase A 의 무상태 dispatch() 를 CommandRouter 로 대체한다.
 from __future__ import annotations
 
 import secrets
+import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
@@ -49,7 +50,9 @@ class CommandDeps:
     store: Any                                            # is_paused/set_paused/get·set_trading_mode/read_trades/record_trade/get_last_signal
     status_provider: Optional[Callable[[], StatusView]] = None
     signal_provider: Optional[Callable[[], Any]] = None   # -> SignalResult(target, score_nasdaq, score_gold)
+    liquidator: Optional[Callable[[], Any]] = None        # -> TransitionResult(legs)  (OrderExecutor.execute("CASH"))
     code_gen: Callable[[], str] = _default_code           # 챌린지 코드 생성(테스트는 고정값 주입)
+    clock: Callable[[], float] = time.time                # 비상정지 60초 타임아웃 판정(테스트는 가짜 시계 주입)
 
 
 def _fmt_money(value: float) -> str:
@@ -98,6 +101,10 @@ class CommandRouter:
             return self._on_virtual_confirm(text)
         if pending.kind == "real_challenge":
             return self._on_real_challenge(pending, text)
+        if pending.kind == "estop_confirm":
+            return self._on_estop_confirm(text, chat_id)
+        if pending.kind == "estop_challenge":
+            return self._on_estop_challenge(pending, text)
         return self._command(text, chat_id)  # 알 수 없는 펜딩 — 안전 폴백
 
     # ----- 명령 디스패치 -----
@@ -119,6 +126,8 @@ class CommandRouter:
             return self._virtual(chat_id)
         if cmd == "/real":
             return self._real(chat_id)
+        if cmd in ("/emergency-stop", "/emergency_stop"):
+            return self._emergency_stop(chat_id)
         return f"알 수 없는 명령입니다: {text!r}\n\n{HELP_TEXT}"
 
     # ----- 조회 (#11) -----
@@ -222,3 +231,59 @@ class CommandRouter:
         # 모드를 먼저 갱신 → 이 확인 메시지부터 send_message 가 [실전] 태그로 발신.
         self._deps.store.set_trading_mode("real")
         return "🔴 실전 모드로 전환했습니다. 실제 자금이 거래됩니다."
+
+    # ----- 비상 정지 (#14) -----
+    def _emergency_stop(self, chat_id: int) -> str:
+        self._pending[chat_id] = _Pending(kind="estop_confirm")
+        return "🚨 전량 청산됩니다. 정말 진행할까요? (y/n)"
+
+    def _on_estop_confirm(self, text: str, chat_id: int) -> str:
+        if not _is_yes(text):
+            return "비상정지를 취소했습니다."
+        code = self._deps.code_gen()
+        self._pending[chat_id] = _Pending(
+            kind="estop_challenge", code=code, expires_at=self._deps.clock() + 60,
+        )
+        return (
+            "⚠️ 최종 확인 — 전량 청산을 실행합니다. 60초 안에 아래 코드를 그대로 입력하세요.\n"
+            f"   확인 코드: {code}"
+        )
+
+    def _on_estop_challenge(self, pending: _Pending, text: str) -> str:
+        # 1) 60초 타임아웃(무응답·지연 시 자동 취소 — 정확한 코드라도 만료면 거부)
+        if pending.expires_at is not None and self._deps.clock() > pending.expires_at:
+            return "⏱️ 시간이 초과되어 청산이 취소되었습니다."
+        # 2) 코드 검증 — 불일치면 청산·pause 모두 일어나지 않는다
+        if text.strip() != pending.code:
+            return "코드가 일치하지 않습니다. 청산이 취소되었습니다."
+        # 3) early-pause 안전장치: 청산 주문 '전에' 먼저 pause 한다.
+        #    청산 도중 프로세스가 죽어도 '일시정지 + 일부청산'이라는 안전한 실패 모드가 되어
+        #    다음 월말 재매수가 차단된다(User Story 38). execute("CASH") 는 멱등이라 재실행으로 마무리 가능.
+        self._deps.store.set_paused(True)
+        try:
+            transition = self._deps.liquidator()
+        except Exception:
+            return (
+                "⚠️ 청산 주문 중 오류가 발생했습니다. 자동거래는 일시정지된 상태입니다.\n"
+                "/status 로 실제 잔고를 확인하고 필요하면 /emergency-stop 을 다시 실행하세요."
+            )
+        # 4) 거래 로그에 별도 사유로 기록(/log 에서 ⚠️비상청산 으로 표시)
+        self._deps.store.record_trade(
+            mode=self._deps.store.get_trading_mode(),
+            signal="CASH",
+            legs=transition.legs,
+            reason="emergency_stop",
+        )
+        return self._format_liquidation(transition)
+
+    @staticmethod
+    def _format_liquidation(transition: Any) -> str:
+        lines = ["🚨 비상 청산 완료 — 자동거래를 일시정지했습니다."]
+        placed = [leg for leg in transition.legs if getattr(leg, "placed", False)]
+        if placed:
+            for leg in placed:
+                lines.append(f"  매도: {leg.symbol} {leg.quantity}주 (접수)")
+        else:
+            lines.append("  (청산할 보유 종목이 없었습니다)")
+        lines.append("  다음 월말 재매수를 막기 위해 일시정지 상태입니다. /resume 으로 재개할 수 있습니다.")
+        return "\n".join(lines)

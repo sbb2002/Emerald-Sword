@@ -9,6 +9,7 @@ import pytest
 from src.commands import CommandDeps, CommandRouter, StatusView
 from src.mode_manager import ModeManager
 from src.momentum import SignalResult
+from src.state_store import TradeRecord
 from src.telegram_bot import TelegramBot
 
 
@@ -34,6 +35,17 @@ class FakeStore:
 
     def read_trades(self, limit=None):
         return self.trades[:limit] if limit else list(self.trades)
+
+    def record_trade(self, *, mode, signal, legs, balance_before=None, balance_after=None,
+                     reason="monthly_signal"):
+        # StateStore.record_trade 와 동일하게 placed 인 leg 만 최신순으로 적재한다.
+        for leg in legs:
+            if not getattr(leg, "placed", False):
+                continue
+            self.trades.insert(0, TradeRecord(
+                executed_at="now", mode=mode, signal=signal,
+                side=leg.side, ticker=leg.symbol, quantity=leg.quantity, reason=reason,
+            ))
 
 
 class FakeSender:

@@ -21,6 +21,33 @@ def _update(chat_id, text):
     return {"message": {"chat": {"id": chat_id}, "text": text}}
 
 
+class FakeClock:
+    """주입형 가짜 시계 — 비상정지 60초 타임아웃을 결정적으로 검증한다."""
+
+    def __init__(self, t: float = 1000.0):
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def _estop_router(store, code="424242", clock=None, legs=None):
+    """고정 코드·시계·청산결과로 비상정지 라우터를 만든다."""
+    from src.order_executor import Leg, TransitionResult
+
+    legs = legs if legs is not None else [Leg("SELL", "QQQM", 5, placed=True)]
+    return CommandRouter(CommandDeps(
+        store=store,
+        status_provider=fake_status,
+        signal_provider=fake_signal,
+        code_gen=lambda: code,
+        clock=clock or (lambda: 1000.0),
+        liquidator=lambda: TransitionResult(
+            target="CASH", target_symbol=None, legs=legs, complete=True
+        ),
+    ))
+
+
 def test_help_lists_all_commands(router):
     out = router.handle("/help", 42)
     assert out == HELP_TEXT
@@ -187,3 +214,59 @@ def test_mode_tag_reflects_switch_immediately(store, sender):
     # 전환 확인 메시지부터 [실전] 태그로 발신돼야 한다(모드 우선 갱신)
     assert sender.sent[-1][1].startswith("[실전]")
     assert store.get_trading_mode() == "real"
+
+
+# ----- 비상 정지 (#14) -----
+
+def test_emergency_stop_full_flow_liquidates_and_pauses(store):
+    store.set_trading_mode("real")
+    r = _estop_router(store, code="424242")
+    out1 = r.handle("/emergency-stop", 42)
+    assert "(y/n)" in out1
+    out2 = r.handle("y", 42)
+    assert "424242" in out2 and "60초" in out2
+    out3 = r.handle("424242", 42)
+    assert store.is_paused() is True                       # 청산 후 자동 pause
+    assert "청산 완료" in out3
+    assert any(t.reason == "emergency_stop" for t in store.read_trades(None))  # /log 기록
+
+
+def test_emergency_stop_cancelled_on_first_no(store):
+    r = _estop_router(store)
+    r.handle("/emergency-stop", 42)
+    out = r.handle("n", 42)
+    assert "취소" in out
+    assert store.is_paused() is False
+
+
+def test_emergency_stop_wrong_code_aborts(store):
+    r = _estop_router(store, code="424242")
+    r.handle("/emergency-stop", 42)
+    r.handle("y", 42)
+    out = r.handle("000000", 42)
+    assert "일치하지 않" in out
+    assert store.is_paused() is False          # 코드 불일치 → pause·청산 모두 없음
+    assert store.read_trades(None) == []
+
+
+def test_emergency_stop_timeout_cancels_even_with_correct_code(store):
+    clock = FakeClock(1000.0)
+    r = _estop_router(store, code="424242", clock=clock)
+    r.handle("/emergency-stop", 42)
+    r.handle("y", 42)                           # expires_at = 1000 + 60 = 1060
+    clock.t = 1061.0                            # 60초 초과
+    out = r.handle("424242", 42)                # 정확한 코드라도 만료면 거부
+    assert "초과" in out
+    assert store.is_paused() is False
+    assert store.read_trades(None) == []
+
+
+def test_emergency_stop_within_timeout_executes(store):
+    clock = FakeClock(1000.0)
+    r = _estop_router(store, code="424242", clock=clock)
+    r.handle("/emergency-stop", 42)
+    r.handle("y", 42)
+    clock.t = 1059.0                            # 60초 이내
+    out = r.handle("424242", 42)
+    assert "청산 완료" in out
+    assert store.is_paused() is True

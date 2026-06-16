@@ -20,6 +20,7 @@ from .market_data import MarketDataProvider
 from .migrate import run_migrations
 from .mode_manager import ModeManager
 from .momentum import decide_signal
+from .order_executor import OrderExecutor
 from .position_service import PositionService
 from .state_store import StateStore
 from .telegram_bot import TelegramBot
@@ -68,8 +69,19 @@ async def lifespan(app: FastAPI):
         gold = md.get("GLDM", 13)
         return decide_signal(nasdaq.month_end_closes, gold.month_end_closes)
 
+    def liquidator():
+        # /emergency-stop 전량 청산 — 사용자가 명령한 유일한 즉시 매매(현재 모드 계좌로).
+        kis = _kis()
+        pos = PositionService(kis)
+        return OrderExecutor(kis, pos, mode=store.get_trading_mode()).execute("CASH")
+
     router = CommandRouter(
-        CommandDeps(store=store, status_provider=status_provider, signal_provider=signal_provider)
+        CommandDeps(
+            store=store,
+            status_provider=status_provider,
+            signal_provider=signal_provider,
+            liquidator=liquidator,
+        )
     )
     app.state.settings = settings
     app.state.bot = TelegramBot(settings.telegram_chat_id, mode, sender, store=store, router=router)
