@@ -5,7 +5,11 @@
 """
 from __future__ import annotations
 
+import logging
+
 import httpx
+
+logger = logging.getLogger(__name__)
 
 
 class TelegramClient:
@@ -14,9 +18,16 @@ class TelegramClient:
         self._timeout = timeout
 
     def send_message(self, chat_id: int, text: str) -> None:
-        resp = httpx.post(
-            f"{self._base}/sendMessage",
-            json={"chat_id": chat_id, "text": text},
-            timeout=self._timeout,
-        )
+        try:
+            resp = httpx.post(
+                f"{self._base}/sendMessage",
+                json={"chat_id": chat_id, "text": text},
+                timeout=self._timeout,
+            )
+        except Exception:
+            logger.exception("텔레그램 sendMessage 요청 실패: chat_id=%s", chat_id)
+            raise
+        if resp.status_code != 200:
+            # 예: {"ok":false,"description":"Forbidden: bot was blocked by the user"} / "chat not found"
+            logger.error("텔레그램 sendMessage 비정상 응답 %s: %s", resp.status_code, resp.text)
         resp.raise_for_status()

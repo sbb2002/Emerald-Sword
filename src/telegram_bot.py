@@ -8,9 +8,12 @@ TelegramSender 는 구조적 인터페이스(Protocol)다. 운영에서는 Teleg
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, Optional, Protocol
 
 from .mode_manager import ModeManager
+
+logger = logging.getLogger(__name__)
 
 
 class TelegramSender(Protocol):
@@ -54,9 +57,13 @@ class TelegramBot:
         """webhook update 처리. 인증 통과 시 명령을 처리·응답하고 True, 아니면 False(무시)."""
         chat_id, text = self.extract(update)
         if not self.is_authorized(chat_id):
+            logger.warning("미인가 chat_id=%s 무시 (허용 chat_id=%s)", chat_id, self._allowed_chat_id)
             return False  # 미등록 chat_id 무시
         if self._router is None:
+            logger.warning("router 미배선 — 명령 처리 안 함 (chat_id=%s)", chat_id)
             return False  # 라우터 미배선(예: cron 은 발신만 사용) — 명령 처리 안 함
+        logger.info("명령 수신: chat_id=%s text=%r", chat_id, text)
         reply = self._router.handle(text, chat_id)
         self.send_message(reply, chat_id=chat_id)
+        logger.info("응답 발송: chat_id=%s (reply %d자)", chat_id, len(reply))
         return True
