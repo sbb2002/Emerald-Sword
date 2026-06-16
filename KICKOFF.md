@@ -31,6 +31,8 @@
 | 2026-06-16 | #14 | `/emergency-stop` 청산을 **Web Service에서 즉시 실행**(결정 B) | User Story 31 "즉시 위험 제거" — 월 1회 cron으론 즉시성 불가. 사용자가 명령하는 유일한 즉시 매매 | DB 플래그만 세팅 후 cron 대기(즉시성 상실) |
 | 2026-06-16 | #14 | **early-pause**: 청산 주문 *전에* `set_paused(True)` | 청산 도중 크래시해도 '정지+일부청산' 안전 실패 모드 → 재매수 차단 유지. execute("CASH") 멱등이라 재실행 마무리 | 청산 후 pause(크래시 시 재매수 위험) |
 | 2026-06-16 | #14 | 60초 타임아웃 = **수동 만료**(만료 후 정확한 코드도 거부) | 백그라운드 타이머 불필요·테스트 결정적(clock 주입). 무응답 시 액션 미발생=자동취소 | 백그라운드 스레드 타이머 |
+| 2026-06-16 | 배포 | cron 서비스 plan `free`→`starter`(유료, ~$0.5/월) | Render 는 cron 에 무료 플랜이 없음. GHA(60일 무활동 시 비활성화→커밋 필요)·web 내부 스케줄러(핑이 free 시간 소진) 모두 부적합 | GitHub Actions / web 내부 스케줄러 |
+| 2026-06-16 | 배포 | web keep-alive(UptimeRobot 핑) **미사용** — 유휴 시 spin-down 허용 | 무료 ~750h/월을 계정 내 다중 free 서비스와 공유 → 상시가동(~730h)은 풀 독점. 명령 cold-start ~30~50초 수용(emergency-stop 포함, 누락은 아님) | UptimeRobot 5분 핑 상시 가동 |
 
 ## Phase B 후속/검증 필요 (handoff 참조)
 

@@ -14,7 +14,7 @@
 
 | 컴포넌트 | 역할 | 실행 주기 | 진입점 |
 |---|---|---|---|
-| Web Service | 텔레그램 webhook 수신 → 명령 처리 → DB 갱신 (매매 안 함) | 상시 (UptimeRobot 5분 핑) | `src/web.py` (`uvicorn src.web:app`) |
+| Web Service | 텔레그램 webhook 수신 → 명령 처리 → DB 갱신 (매매 안 함) | 유휴 시 spin-down, 명령 수신 시 cold-start (keep-alive 미사용) | `src/web.py` (`uvicorn src.web:app`) |
 | Cron Job | `is_paused` 확인 → 모멘텀 계산 → 주문 | 매월 말 자정(KST) | `src/cron.py` (`python -m src.cron`) |
 
 ## 진행 상황
@@ -59,8 +59,8 @@ https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://<your-host>/webho
 
 ## 배포
 
-`render.yaml` Blueprint로 web + cron 두 서비스를 한 번에 생성한다. 비밀값은 `emerald-sword-secrets`
-env 그룹에 입력한다. `/healthcheck` 를 UptimeRobot 5분 핑 대상으로 등록해 spin-down을 방지한다.
+`render.yaml` Blueprint로 web(free) + cron(starter) 두 서비스를 한 번에 생성한다. 비밀값은 `emerald-sword-secrets`
+env 그룹에 입력한다. web 은 keep-alive 핑을 쓰지 않아 유휴 시 잠들고(free 시간 절약) 텔레그램 명령이 오면 cold-start 로 기동한다(유휴 후 첫 명령 ~30~50초 지연 수용). 월 1회 트레이드는 독립된 cron 이 담당한다.
 
 ## 보안 규칙
 

@@ -17,8 +17,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 | 컴포넌트 | 역할 | 실행 주기 |
 |---|---|---|
-| Web Service | 텔레그램 webhook 수신 → 명령 처리 → DB 갱신. 매매 안 함. | 상시 (UptimeRobot 5분 핑으로 spin-down 방지) |
-| Cron Job | DB의 `is_paused` 확인 → 모멘텀 계산 → 주문 실행 | 매월 말 자정(한국시간, DST 반영) |
+| Web Service | 텔레그램 webhook 수신 → 명령 처리 → DB 갱신. 매매 안 함. | 유휴 시 spin-down, 명령 수신 시 cold-start 기동 (keep-alive 미사용 — free 시간 절약) |
+| Cron Job | DB의 `is_paused` 확인 → 모멘텀 계산 → 주문 실행 | 매월 말 자정(한국시간, DST 반영). Render cron = starter 플랜(유료) |
 
 ### 핵심 모듈
 

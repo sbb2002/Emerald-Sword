@@ -115,7 +115,7 @@
   - **Cron Job (월 1회)**: 매월 말 자정 무렵 깨어나 전략을 실행한다. **기상 즉시 DB의 `is_paused`를 확인**하여, `True`면 거래를 건너뛰고 알림만 보낸 뒤 종료, `False`면 모멘텀 계산·주문을 수행한다.
 - **두 서비스는 직접 통신하지 않는다.** Neon PostgreSQL이 유일한 공유 상태 저장소다(Web이 쓰고 Cron이 읽음). 이로써 별도의 폴링 크론이나 텔레그램 long-polling 워커가 불필요하다.
 - **`is_paused` 의미 규약(혼동 방지)**: `is_paused = True` → 거래 중지(스킵 + 알림). `is_paused = False` → 정상 거래. 변수명은 "참이면 멈춘다"가 직관적으로 읽히도록 `is_paused`로 한다.
-- **Web Service spin-down 대응(필수)**: Render 무료 web service는 15분 비활동 시 잠들고 재기동에 30~50초가 걸리며, 이 지연 동안 텔레그램 webhook을 놓칠 수 있다(실사례 존재). 따라서 **UptimeRobot 등 외부 모니터로 5분 간격 keep-alive 핑**을 보내 상시 깨움 상태를 유지한다. 이를 위해 web service에 가벼운 `/healthcheck` 엔드포인트를 둔다.
+- **Web Service spin-down 대응 (★ 배포에서 변경: keep-alive 미채택 — KICKOFF 의사결정 로그 참조)**: Render 무료 web service는 15분 비활동 시 잠들고 재기동에 30~50초가 걸린다. 당초 UptimeRobot 5분 핑으로 상시 깨움을 유지하려 했으나, **무료 시간(~750h/월, 계정 내 free 서비스 공유) 절약을 위해 keep-alive를 쓰지 않고 spin-down을 허용**하기로 했다. 텔레그램 명령은 cold-start(~30~50초)로 깨어나 처리하며(유휴 후 첫 명령만 지연, 누락은 텔레그램 webhook 재시도로 방지), `/emergency-stop`도 이 지연을 수용한다. web service에는 `/healthcheck` 엔드포인트를 둔다(배포 헬스체크용).
 - **실행 시각**: 매월 마지막 거래일, 미국 정규장 시간 내. 한국시간 기준 **썸머타임 반영 필수**(미국장 한국시간 23:30~06:00, 썸머타임 시 22:30~05:00). 자정~1시 타깃은 "미국장 개장 충격이 잦아든 시점"이라는 사용자 의도 반영.
 - **기본 동작은 자동(레벨 3)**, 위험 상황에서만 텔레그램 승인(레벨 2)으로 전환되는 하이브리드.
 
@@ -205,7 +205,7 @@
 - GitHub → Render **Blueprint(`render.yaml`)**로 배포(IaC). **하나의 레포에 web service와 cron job 두 서비스를 함께 정의**한다.
 - DB는 Neon을 쓰므로 Blueprint에는 두 서비스만 정의하고 Neon 연결문자열을 두 서비스 공통 env로 주입.
 - **`/pause` 등 상태 변경은 코드 변경/깃 푸시가 아니라 DB 갱신으로만 처리한다.** (깃 푸시 방식은 매번 재배포를 유발하고 깃 토큰 보관·커밋 오염·경합 문제가 있어 금지)
-- web service spin-down 방지를 위해 UptimeRobot(무료)에서 `/healthcheck`로 5분 간격 핑 설정.
+- (★ 배포에서 변경) web service 는 keep-alive 핑을 쓰지 않고 spin-down을 허용한다(무료 시간 절약 — 명령은 cold-start ~30~50초 지연 수용). cron 은 Render 에 무료 플랜이 없어 **starter(유료)** 로 띄운다.
 
 ### 주요 인터랙션 (텔레그램 메시지 형식 예)
 - **사후 체결 보고**(자동 주문 후, 머리에 모드 태그):

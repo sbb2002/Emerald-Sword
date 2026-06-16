@@ -10,7 +10,7 @@
 ## 기술 스택
 - 언어/실행: Python, Render(web service + cron job 2개, 같은 레포)
 - DB: Neon PostgreSQL (Render 무료 DB는 30일 만료라 안 씀)
-- 외부 API: 한국투자증권(KIS) Open API, 텔레그램 봇, UptimeRobot(keep-alive)
+- 외부 API: 한국투자증권(KIS) Open API, 텔레그램 봇 (keep-alive 미사용 — web 은 유휴 시 spin-down)
 
 ## 절대 규칙 (위반 금지)
 1. 비밀값(KIS 키, 텔레그램 토큰, DB URL)은 코드·git에 절대 넣지 않는다.
@@ -22,7 +22,7 @@
 5. 상태 변경(pause·mode)은 깃 푸시가 아니라 DB 갱신으로만 처리.
 
 ## 아키텍처 핵심
-- Web Service(상시): 텔레그램 webhook 수신 → 명령 처리 → DB 갱신. 매매 안 함.
+- Web Service(유휴 시 spin-down, 명령 시 cold-start): 텔레그램 webhook 수신 → 명령 처리 → DB 갱신. 매매 안 함.
 - Cron Job(월 1회): 기상 즉시 DB의 is_paused 확인 → false면 모멘텀 계산·주문.
 - 두 서비스는 직접 통신하지 않고 Neon DB만 공유.
 - 전략 신호는 NASDAQ/GOLD/CASH 추상값으로 산출 후 QQQM/GLDM에 매핑.

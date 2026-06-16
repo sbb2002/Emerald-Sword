@@ -41,7 +41,7 @@
 ▶️ **실행**
 ```powershell
 git clone <레포 URL> ; cd emerald-sword
-git switch phase-c/telegram-commands       # 전체 기능이 들어있는 브랜치
+git switch main                            # Phase A+B+C 전체가 main 에 머지됨
 python -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install -r requirements-dev.txt        # 테스트 포함(런타임은 requirements.txt)
 Copy-Item .env.example .env                # 그리고 .env 값 채우기
@@ -142,17 +142,17 @@ print(kis.get_open_orders())
 
 ### 5-A. Render 배포 (텔레그램 명령 검증용)
 ▶️ **실행**
-1. `render.yaml` Blueprint 로 배포(연결 브랜치 = `phase-c/telegram-commands`).
+1. `render.yaml` Blueprint 로 배포(연결 브랜치 = `main`). web=free, cron=starter(유료).
 2. `emerald-sword-secrets` env 그룹에 §0 값 입력(여기에 실전 값은 비워도 모의검증엔 무방).
 3. webhook 등록(봇 토큰을 경로에 그대로):
    ```
    https://api.telegram.org/bot<BOT_TOKEN>/setWebhook?url=https://<your-host>/webhook/<BOT_TOKEN>
    ```
-4. UptimeRobot 으로 `https://<your-host>/healthcheck` 5분 핑.
+4. **keep-alive 핑은 쓰지 않는다** — web 은 유휴 시 잠들고(free 시간 절약) 명령이 오면 cold-start(~30~50초)로 깨어난다. 유휴 후 첫 명령만 지연될 뿐 누락은 없다(텔레그램 webhook 재시도).
 
 ✅ **검증**
-- [ ] `GET /healthcheck` → `{"status":"ok"}`
-- [ ] 봇에 `/help` → **`[모의]`** 태그와 함께 명령어 목록이 온다
+- [ ] `GET /healthcheck` → `{"status":"ok"}` (1회 확인 — 상시 핑은 걸지 않음)
+- [ ] 봇에 `/help` → **`[모의]`** 태그와 함께 명령어 목록이 온다(유휴 상태였다면 첫 응답까지 ~30~50초)
 
 ### 5-B. cron 로컬 1회 (텔레그램 명령 없이)
 ▶️ **실행**

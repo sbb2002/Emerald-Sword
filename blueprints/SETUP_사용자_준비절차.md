@@ -16,7 +16,7 @@
 | 4 | Neon PostgreSQL 생성 | Neon | DB 연결 문자열(DATABASE_URL) |
 | 5 | GitHub 레포 준비 | GitHub | 레포 URL |
 | 6 | Render 계정 + Blueprint 배포 | Render | 두 서비스 배포 |
-| 7 | UptimeRobot keep-alive 설정 | UptimeRobot | 5분 핑 모니터 |
+| 7 | ~~UptimeRobot keep-alive~~ → **미사용** | — | web 은 유휴 시 잠들고 명령 시 cold-start (free 시간 절약) |
 | 8 | 초기 자금 + 수동 환전 | 한국투자증권 앱 | 달러 잔고 |
 
 ---
@@ -124,20 +124,17 @@ Render Blueprint 배포는 GitHub 레포에서 코드를 가져온다.
    - (이 호출은 1회성. 코드에 자동화 로직을 둘 수도 있으나, 최초엔 직접 확인 권장.)
 5. **cron 스케줄 확인**: `render.yaml`의 cron 스케줄이 월말 미국장 시간(한국시간, 썸머타임 반영)에 맞는지 점검. DST 전환 시 1시간 이동에 유의.
 
-> **무료 플랜 주의**: Render 무료 web service는 15분 비활동 시 잠들고 깨우는 데 30~50초가 걸린다. 이 지연으로 텔레그램 명령을 놓칠 수 있어 7번 keep-alive가 필요하다.
+> **무료 플랜 동작(중요)**: Render 무료 web service는 15분 비활동 시 잠들고(spin-down) 다음 요청 때 깨우는 데 30~50초가 걸린다. 본 봇은 **keep-alive를 쓰지 않고 이 spin-down을 그대로 허용**한다(무료 시간 절약 — 계정 내 다른 무료 서비스와 ~750h/월 공유). 텔레그램 명령은 봇이 cold-start로 깨어나며 처리되므로 **유휴 후 첫 명령은 ~30~50초 지연**될 수 있다(`/emergency-stop` 포함, 수용). 텔레그램이 webhook을 재시도하므로 명령은 누락되지 않는다. 월 1회 트레이드는 web과 무관한 별도 **cron**(유료 starter)이 담당하므로 web이 잠들어 있어도 정상 실행된다.
 
 ---
 
-## 7. UptimeRobot keep-alive 설정
+## 7. (미사용) keep-alive — web 은 유휴 시 잠들게 둔다
 
-web service가 잠들지 않도록 외부에서 주기적으로 깨운다.
-
-1. **uptimerobot.com** 가입(무료).
-2. 새 **HTTP(s) 모니터** 생성.
-3. 모니터 대상 URL: web service의 **`/healthcheck`** 엔드포인트(예: `https://yourbot.onrender.com/healthcheck`).
-4. 체크 간격: **5분**(무료 플랜 최소 간격). Render의 15분 비활동 임계보다 짧으므로 상시 깨어있게 된다.
-
-> **한계 인지**: UptimeRobot 자체 장애 시 web service가 잠들 수 있다. 월말 실행 직전 cron이 web을 한 번 깨우는 보조 핑은 선택적으로 코드에서 처리 가능(구현 시 결정).
+> **결정**: 무료 시간을 아끼기 위해 **UptimeRobot 등 keep-alive 핑을 사용하지 않는다.** Render 무료 web service는 15분 비활동 시 잠들지만, 텔레그램 명령이 오면 cold-start(~30~50초)로 깨어나 처리한다. 유휴 후 첫 명령만 지연될 뿐 누락은 없다(텔레그램 webhook 재시도). `/emergency-stop`도 같은 지연을 수용한다.
+>
+> 월 1회 전략 실행은 web 과 무관한 **별도 cron 서비스**가 담당하므로, web 이 잠들어 있어도 트레이드는 정상 실행된다.
+>
+> (정 즉시 응답이 필요하면 UptimeRobot HTTP 모니터로 `/healthcheck` 를 5분 간격 핑해 상시 깨울 수 있으나, 무료 시간(~750h/월)을 거의 다 소진하므로 본 프로젝트는 쓰지 않는다.)
 
 ---
 
@@ -162,7 +159,7 @@ web service가 잠들지 않도록 외부에서 주기적으로 깨운다.
 - [ ] GitHub 레포 준비, 비밀 값 커밋되지 않음 확인(`.gitignore`)
 - [ ] Render 두 서비스 배포 성공, 환경변수 전부 입력
 - [ ] 텔레그램 webhook 등록 완료(`/help` 보내서 응답 오는지 확인)
-- [ ] UptimeRobot 5분 핑 동작 확인(`/healthcheck` 200 응답)
+- [ ] (keep-alive 미사용) `/healthcheck` 가 200 을 반환하는지만 1회 확인 — 상시 핑은 걸지 않음. 유휴 후 첫 명령은 cold-start ~30~50초 지연 수용
 - [ ] **기본 모드가 `virtual`인지 확인** → `/virtual`에서 1 사이클 모의 거래 검증
 - [ ] `/real` 전환 시 챌린지-응답(확인코드) 동작 확인, 알림 머리에 `[실전]` 태그 표시 확인
 - [ ] 달러 잔고 충전, 소액으로 **1 사이클 실거래(real)** 검증
