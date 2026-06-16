@@ -50,19 +50,28 @@ async def lifespan(app: FastAPI):
         try:
             kis = _kis()
             snap = PositionService(kis).snapshot()
-            prices = []
+            prices: dict = {}
             for sym in ("QQQM", "GLDM"):
                 try:
                     px = kis.get_price(sym)
                     if px > 0:
-                        prices.append(px)
+                        prices[sym] = px
                 except Exception:
                     pass
-            cheapest = min(prices) if prices else 0.0
+            cheapest = min(prices.values()) if prices else 0.0
             insufficient = bool(cheapest > 0 and snap.cash < cheapest)
+            signal = None
+            try:  # 현재 신호는 best-effort — 실패해도 status 자체는 정상 표시
+                md = MarketDataProvider(kis)
+                nasdaq = md.get("QQQM", 13)
+                gold = md.get("GLDM", 13)
+                signal = decide_signal(nasdaq.month_end_closes, gold.month_end_closes).target
+            except Exception:
+                signal = None
             return StatusView(
                 holdings=snap.holdings, cash=snap.cash,
                 insufficient_for_next=insufficient, server_ok=True,
+                prices=prices, signal=signal,
             )
         except Exception:
             # KIS 도달 실패 등 — 서버 상태를 '오류'로 표시(명령 자체는 200 으로 응답).

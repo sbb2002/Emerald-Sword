@@ -37,10 +37,12 @@ HELP_TEXT = (
 class StatusView:
     """/status 가 표시할 데이터(포맷은 라우터가 담당 — 테스트가 포맷을 검증)."""
 
-    holdings: dict           # {symbol: quantity}
+    holdings: dict                       # {symbol: quantity}
     cash: float
     insufficient_for_next: bool
     server_ok: bool
+    prices: Optional[dict] = None        # {symbol: 현재가} — 평가금액 계산용(없으면 금액 생략)
+    signal: Optional[str] = None         # 현재 모멘텀 신호(NASDAQ|GOLD|CASH), best-effort
 
 
 def _default_code() -> str:
@@ -141,15 +143,31 @@ class CommandRouter:
     # ----- 조회 (#11) -----
     def _status(self) -> str:
         sv = self._deps.status_provider()
+        prices = sv.prices or {}
         lines = ["📊 현재 상태"]
+        holdings_value = 0.0
         if sv.holdings:
             for sym, qty in sv.holdings.items():
-                lines.append(f"  보유: {sym} {qty}주")
+                px = prices.get(sym, 0.0)
+                if px > 0:
+                    val = qty * px
+                    holdings_value += val
+                    lines.append(f"  보유: {sym} {qty}주 (~{_fmt_money(val)})")
+                else:
+                    lines.append(f"  보유: {sym} {qty}주")
         else:
             lines.append("  보유: 없음 (현금)")
         lines.append(f"  현금: {_fmt_money(sv.cash)}")
+        lines.append(f"  총자산: ~{_fmt_money(holdings_value + sv.cash)}")
+        if sv.signal:
+            label = {
+                "NASDAQ": "NASDAQ (QQQM)",
+                "GOLD": "GOLD (GLDM)",
+                "CASH": "CASH (현금)",
+            }.get(sv.signal, sv.signal)
+            lines.append(f"  신호: {label}")
         lines.append(f"  다음 거래 잔고부족: {'예' if sv.insufficient_for_next else '아니오'}")
-        lines.append(f"  서버: {'정상' if sv.server_ok else '오류'}")
+        lines.append(f"  서버: {'✅ 정상' if sv.server_ok else '⚠️ 오류'}")
         return "\n".join(lines)
 
     def _signal(self) -> str:

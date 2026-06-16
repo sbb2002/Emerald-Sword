@@ -128,7 +128,7 @@ def _transition():
     return TransitionResult("NASDAQ", "QQQM", [sell, buy], True)
 
 
-def _build(store, *, market=None, fill_complete=True):
+def _build(store, *, market=None, fill_complete=True, positions=None):
     sender = FakeSender()
     bot = TelegramBot(42, ModeManager(store), sender)
     fakes = {
@@ -143,7 +143,7 @@ def _build(store, *, market=None, fill_complete=True):
         notify=bot.send_message,
         token_manager=fakes["token"],
         market_data=market or FakeMarket(NASDAQ_RISING, GOLD_FALLING),
-        positions=FakePositions([Pos({"GLDM": 4}, 1000.0), Pos({"QQQM": 3}, 50.0)]),
+        positions=positions or FakePositions([Pos({"GLDM": 4}, 1000.0), Pos({"QQQM": 3}, 50.0)]),
         order_executor=fakes["executor"],
         fill_handler=FakeFill(fill_complete),
         fallback=fakes["fallback"],
@@ -175,12 +175,24 @@ def test_executes_and_reports_with_mode_tag_and_details():
     assert "잔고: $1000.0 → $50.0" in msg           # 잔고 변화
 
 
-def test_same_signal_no_trade():
-    deps, f = _build(FakeStore(last_signal="NASDAQ"))
+def test_already_holding_target_no_trade():
+    # 실제로 목표(QQQM)를 이미 보유하면 무거래 — 직전 신호 값과 무관.
+    deps, f = _build(FakeStore(), positions=FakePositions([Pos({"QQQM": 3}, 50.0)]))
     result = run_cycle(deps)
     assert result.status == UNCHANGED
     assert f["executor"].calls == 0
-    assert "변동 없음" in f["sender"].sent[-1][1]
+    assert "무거래" in f["sender"].sent[-1][1]
+
+
+def test_stale_last_signal_does_not_block_empty_position():
+    # 자가치유: 직전 신호=NASDAQ(실패한 사이클 잔재)라도 실보유가 없으면 매수 실행.
+    deps, f = _build(
+        FakeStore(last_signal="NASDAQ"),
+        positions=FakePositions([Pos({}, 1000.0), Pos({"QQQM": 3}, 50.0)]),
+    )
+    result = run_cycle(deps)
+    assert result.status == EXECUTED
+    assert f["executor"].calls == 1
 
 
 def test_outlier_holds_without_trading():

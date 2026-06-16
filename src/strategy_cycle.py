@@ -17,6 +17,7 @@ from datetime import datetime
 from typing import Callable, Optional
 
 from .momentum import decide_signal
+from .order_executor import ALL_TICKERS, TICKER
 
 PAUSED = "PAUSED"
 OUTLIER_PENDING = "OUTLIER_PENDING"
@@ -59,6 +60,15 @@ def _format_report(target: str, transition, before, after, now: datetime) -> str
     return "\n".join(lines)
 
 
+def _already_at_target(target: str, holdings: dict) -> bool:
+    """실제 보유가 목표 신호와 일치하는가 — 직전 신호가 아니라 '포지션'이 단일 진실 원천."""
+    target_symbol = TICKER.get(target)  # CASH → None
+    held = {s for s in ALL_TICKERS if int(holdings.get(s, 0) or 0) > 0}
+    if target_symbol is None:           # CASH: 아무 종목도 보유하지 않아야 일치
+        return not held
+    return held == {target_symbol}      # 목표 종목만 정확히 보유
+
+
 def run_cycle(deps: CycleDeps) -> CycleResult:
     # 1) 일시정지 게이트
     if deps.store.is_paused():
@@ -80,16 +90,19 @@ def run_cycle(deps: CycleDeps) -> CycleResult:
             deps.approvals.request("outlier", "PENDING", ttl_seconds=12 * 3600, rerequestable=False)
         return CycleResult(OUTLIER_PENDING)
 
-    # 4) 신호 산출 + 직전 신호 비교
+    # 4) 신호 산출 (last_signal 은 기록만 — 매매 판단은 아래 '실제 보유 포지션' 기준)
     signal = decide_signal(nasdaq.month_end_closes, gold.month_end_closes)
-    last = deps.store.get_last_signal()
     deps.store.set_last_signal(signal.target, signal.score_nasdaq, signal.score_gold)
-    if last == signal.target:
-        deps.notify(f"ℹ️ {deps.now().strftime('%Y-%m')} 신호 변동 없음: {signal.target} 유지 — 무거래.")
+
+    # 5) 실제 보유가 이미 목표와 일치하면 무거래.
+    #    직전 신호가 아니라 KIS 실보유를 기준으로 판단 → 크래시·중단에도 자가치유
+    #    (실패한 사이클이 last_signal 만 남겨 이후 영구히 '무거래'가 되던 버그 방지).
+    before = deps.positions.snapshot()
+    if _already_at_target(signal.target, before.holdings):
+        deps.notify(f"ℹ️ {deps.now().strftime('%Y-%m')} 신호 {signal.target} — 이미 목표 보유, 무거래.")
         return CycleResult(UNCHANGED, target=signal.target)
 
-    # 5) 2-leg 전환 + 체결 정산
-    before = deps.positions.snapshot()
+    # 6) 2-leg 전환 + 체결 정산
     transition = deps.order_executor.execute(signal.target)
     settlement = deps.fill_handler.settle(transition)
     if not settlement.complete:

@@ -66,12 +66,15 @@ def test_unknown_command_falls_back_to_help(router):
     assert HELP_TEXT in out
 
 
-def test_status_shows_holdings_cash_and_server(router):
+def test_status_shows_holdings_value_total_and_emoji(router):
     out = router.handle("/status", 42)
     assert "현재 상태" in out
     assert "QQQM 3주" in out
-    assert "$125.50" in out
-    assert "서버: 정상" in out
+    assert "$1,455.00" in out        # 평가금액 3주 × $485
+    assert "$125.50" in out          # 현금
+    assert "총자산" in out
+    assert "✅" in out               # 서버 상태 이모지
+    assert "NASDAQ (QQQM)" in out    # 현재 신호
 
 
 def test_signal_previews_current_target(router):
