@@ -1,15 +1,20 @@
-"""PartialFillHandler — 부분 체결 감지 + 재시도.
+"""PartialFillHandler — 2-leg 주문의 '접수' 정산.
 
-2-leg 전환 후 각 leg의 체결 수량을 조회해, 미체결/부분 체결이면 잔여 수량을
-최대 N회 재주문한다(한쪽 leg만 체결돼 현금만 붕 뜨는 상태 방지).
-최종적으로도 미완료면 SettlementReport.complete=False 로 보고해 상위(cron)가 알림한다.
+각 leg 의 접수 결과(accepted = KIS rt_cd=0)를 모아 보고한다.
+하나라도 거부(accepted=False)면 SettlementReport.complete=False 가 되어
+상위(strategy_cycle→cron)가 미완료로 알린다.
 
-재시도는 토큰을 재발급하지 않는다(TokenManager가 기존 토큰 재사용 — KIS 분당 1회 제한).
+⚠️ 부분체결 자동재시도는 의도적으로 비활성화돼 있다.
+   체결수량 조회(KisClient.get_executions)가 아직 스텁(항상 0 반환)이라,
+   '체결량 기준 재주문'을 하면 접수된 주문을 미체결로 오판해 같은 주문을 다시 내
+   '중복 매수'(실거래에서 의도의 2배)를 일으킨다. 실제 모의 트리거에서 동일 매수가
+   2회 접수돼 현금이 소진된 바 있다(2026-06). 따라서 get_executions 를 KIS
+   체결조회(inquire-ccnl)로 실제 구현한 뒤 '대기 → 체결확인 → 미체결분 취소 후
+   재주문' 형태로 안전하게 복원한다. 그 전까지는 접수만 정산한다.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
 
 from .kis_interface import KisClient
 from .order_executor import TransitionResult
@@ -34,7 +39,7 @@ class LegSettlement:
 @dataclass
 class SettlementReport:
     legs: list
-    retries_used: int
+    retries_used: int = 0
 
     @property
     def complete(self) -> bool:
@@ -46,42 +51,18 @@ class SettlementReport:
 
 
 class PartialFillHandler:
-    def __init__(
-        self,
-        client: KisClient,
-        *,
-        max_retries: int = 3,
-        retry_wait: float = 0.0,
-        sleep: Callable[[float], None] = lambda s: None,
-    ) -> None:
+    def __init__(self, client: KisClient) -> None:
+        # client 는 부분체결 재시도(get_executions 구현 후) 복원 시 사용. 현재 settle 은 미사용.
         self._client = client
-        self._max_retries = max_retries
-        self._retry_wait = retry_wait
-        self._sleep = sleep
-
-    def _filled(self, order_id: str) -> int:
-        try:
-            return int(self._client.get_executions(order_id).filled_qty)
-        except Exception:
-            return 0
 
     def settle(self, transition: TransitionResult) -> SettlementReport:
-        legs: dict = {}
+        # 접수(accepted=rt_cd=0) 기준 정산 — 재주문하지 않는다(중복 주문 방지).
+        # 접수된 leg 는 완료로, 거부된 leg 는 미완료(remaining>0)로 본다.
+        legs: list = []
         for leg in transition.placed_orders:
             if leg.order is None:
                 continue
-            key = (leg.symbol, leg.side)
-            legs[key] = LegSettlement(leg.symbol, leg.side, leg.quantity, self._filled(leg.order.order_id))
-
-        retries = 0
-        while retries < self._max_retries and any(not leg.complete for leg in legs.values()):
-            retries += 1
-            self._sleep(self._retry_wait)
-            for key, ls in list(legs.items()):
-                if ls.complete:
-                    continue
-                new_order = self._client.place_order(ls.symbol, ls.side, ls.remaining)
-                added = self._filled(new_order.order_id)
-                legs[key] = LegSettlement(ls.symbol, ls.side, ls.ordered_qty, ls.filled_qty + added)
-
-        return SettlementReport(legs=list(legs.values()), retries_used=retries)
+            accepted = bool(getattr(leg.order, "accepted", False))
+            filled = leg.quantity if accepted else 0
+            legs.append(LegSettlement(leg.symbol, leg.side, leg.quantity, filled))
+        return SettlementReport(legs=legs, retries_used=0)
