@@ -1,43 +1,38 @@
 # HANDOFF — 복합모멘텀 QQQM/GLDM 봇
 
-> 다음 세션이 이 파일만 읽고 이어받을 수 있도록 작성. 최종 업데이트: 2026-06-16
+> 다음 세션이 이 파일만 읽고 이어받을 수 있도록 작성. 최종 업데이트: 2026-06-17
 
 ## Goal
 나스닥100(QQQM)/금(GLDM) 3·6·12개월 복합모멘텀 자동매매 봇 구현. 명세 단일 진실 원천: `blueprints/PRD_momentum_bot.md`. 작업 방식: GitHub 이슈 단위 `/combo-run`(pre-flight → 구현 → syntax-gate → post-patch → 커밋), 소스는 `./src`, 이슈별 커밋 + Phase별 PR.
 
 ---
 
-## ⚡ 현재 진행: 라이브 모의(virtual) 매매 디버깅 — **최우선** (2026-06-16 갱신)
+## ⚡ 현재 진행: 라이브 모의(virtual) 매매 디버깅 (2026-06-17 갱신)
 
-> Phase A/B/C 구현·테스트는 끝났고(85 passed, 1 skipped), 지금은 **Render 배포 후 KIS 모의계좌로 실제 매매가 되게 만드는 라이브 디버깅** 단계. KIS 명세가 문서로 안 잡혀서 **코드에 로그 심기 → Render cron "Trigger Run" → 로그로 필드/원인 확정 → 수정 → push(main) → 재트리거** 사이클로 잡아왔다.
+> Phase A/B/C 구현·테스트 완료(**84 passed, 1 skipped**). 지금은 **Render 배포 + KIS 모의계좌로 실제 매매가 되게 만드는 라이브 디버깅** 단계. 방식: 코드에 로그 심기 → Render cron "Trigger Run" → 로그로 원인 확정 → 수정 → push(main) → 재트리거.
 
 ### 배포 상태
-- **`main` = 전부**(Phase A+B+C + 라이브 수정). 배포는 `git push origin <branch>:main` 으로 main 갱신 → Render autoDeploy. (로컬은 detached/phase-c 였음; 다른 머신에선 `git pull` 후 `main` 기준으로 작업.)
-- Render: **web=free(유휴 spin-down, keep-alive 미사용)**, **cron=starter(유료, 월 1회)**. webhook = `https://<host>/webhook/<BOT_TOKEN>`. `/status`·로그로 동작 확인.
-- KIS **모의계좌**(CANO 50162185-01, `ACNT_PRDT_CD=01` 검증됨). 기본 시드 **$100,000 USD**(천만원 아님). 모의는 매수 시 자동환전.
-- 로깅: `src/logging_setup.py`(stdout INFO). KIS 호출/주문/잔고가 전부 로그로 찍힘.
+- **`main` = 배포 브랜치**(autoDeploy). 이번 세션에서 로컬 main이 origin/main보다 **33커밋 뒤처져 있던 걸 fast-forward 동기화**함. 다른 머신: `git checkout main && git pull` 후 main 기준 작업.
+- Render: web=free(유휴 spin-down, keep-alive 미사용), cron=starter(유료, 월 1회). webhook=`https://<host>/webhook/<BOT_TOKEN>`.
+- KIS **모의계좌**(CANO 50162185-01, `ACNT_PRDT_CD=01`). 시드 **$100,000 USD**, 매수 시 자동환전. **해외주식 모의투자 '리그' 신청 필수**(아래 참조).
+- 로깅: `src/logging_setup.py`(stdout INFO). KIS 호출/주문/잔고 전부 로그.
 
-### 라이브로 확정·해결된 것 (커밋)
-- 시세 EXCD는 **3자리**(QQQM=`NAS`, GLDM=`AMS`), 주문/잔고는 4자리(`NASD`/`AMEX`). 월봉(`GUBN=2`)로 13개월+ 이력 확보. (`d9fe24f`)
-- **초당 호출 제한** 회피: 모든 KIS 호출에 throttle 1.1초 + 5xx 재시도(`_send`). (`527cf90`) — 잔고/시세 500 해결.
-- 현금: `inquire-balance` output2엔 현금 없음(손익 summary). **`inquire-psamount`(VTTS3007R)** 의 `ord_psbl_frcr_amt`($100k)로 읽음. (`82a34c8`)
-- 매수 수량: `floor(cash/price)`는 수수료·환율 버퍼로 KIS 한도 초과 → **`max_ord_psbl_qty`** 그대로 사용(`get_buyable_qty`). (`9859f7a`)
-- 매매 판단 자가치유(직전신호→실보유 기준) + /status 평가금액·총자산·이모지. (`8404b7a`)
+### ✅ 이번 세션에 해결 (커밋)
+- **주문 500 / `IGW00019` "주문구분을 확인해주세요"** → `place_order` 본문에 **`ORD_DVSN`(주문구분) 누락** + `OVRS_ORD_UNPR="0"`(시장가). 미국주식은 정규장 시장가 미지원 → **`ORD_DVSN="00"`(지정가) 추가 + 단가를 현재가 지정가**로. `place_order` 내부에서 `get_price` 조회(시그니처 불변 → 호출자·테스트 무영향). (`756cab7`)
+- **"모의투자 주문이 불가한 계좌"** → 코드 아님. **KIS 모의투자 해외주식 '리그' 미신청**이 원인(조회는 되나 주문만 거부. 모의 시즌 만료 시도 동일 증상). 사용자가 해외 리그 (재)신청으로 해결.
+- **중복 매수 버그** → `fill_monitor.settle`이 `get_executions`(스텁=0)로 체결 확인 → 접수 주문을 미체결로 오판 → 같은 주문 재발행(QQQM 326주×2 접수, 현금소진). **settle을 '접수(accepted=rt_cd=0) 기준 정산 + 재주문 완전 제거'로 변경**(중복 차단). 부분체결 자동재시도는 끔. (`be1bc5f`)
+- **토큰 403 Forbidden** → 코드 아님. KIS **토큰 발급 1분 제한**. web 명령(/status·/emergency-stop)이 토큰 쓴 직후 cron 트리거가 1분 내 겹치면 발생(web↔cron 토큰 미공유). **1~2분 텀** 두면 통과.
 
-### 🚧 현재 블로커 — 매수 주문 500
-`place_order`(`/uapi/overseas-stock/v1/trading/order`)가 500. rate limit 아님(1초 간격 재시도 3회 모두 실패=영구거부). 수량초과는 위에서 수정함. **남은 의심: ① 주문구분 — `OVRS_ORD_UNPR="0"`(시장가)가 미국 지정가와 안 맞을 가능성, ② 장외시간**(직전 트리거가 KST 07:34=미국장 마감). 주문 500 시 **응답 본문을 로깅**하도록 해둠(`9859f7a`).
+### ✅ 라이브 최종 검증 (2026-06-16 모의장중 트리거)
+주문이 **1번만** 접수됨: `BUY QQQM 324주 → rt_cd=0 ODNO=0000035310 "매수주문이 완료"`. (이전엔 중복으로 4번) → **중복 차단 확인.**
+- 이전 세션 확정분: 시세 EXCD 3자리(`NAS`/`AMS`)·주문/잔고 4자리(`NASD`/`AMEX`), 월봉 `GUBN=2` (`d9fe24f`); throttle 1.1s+5xx 재시도 (`527cf90`); 현금=`inquire-psamount`의 `ord_psbl_frcr_amt` (`82a34c8`); 매수수량=`max_ord_psbl_qty`(`get_buyable_qty`) (`9859f7a`); 자가치유 판단+/status 강화 (`8404b7a`).
 
-### ▶ 다음 단계 (이걸 하면 됨)
-1. **미국 장중(KST 22:30~05:00)** 에 Render 대시보드 → `emerald-sword-cron` → **"Trigger Run"**.
-2. 로그에서 확인:
-   - `KIS 매수가능수량: QQQM 323주` → `KIS 주문: BUY QQQM 323주 → rt_cd=0 ODNO=... msg=...` 면 **체결 성공**.
-   - `KIS 주문 실패 HTTP 500: {본문}` 이면 그 **본문**이 사유(수량/주문구분/장시간)를 확정.
-3. 500이 지속되고 본문이 주문가격/구분 문제면 → `place_order`의 `OVRS_ORD_UNPR`을 실제 지정가(예: 현재가×1.02)로, 필요시 `ORD_DVSN` 추가. **`place_order` 시그니처에 price 추가**가 필요할 수 있음(현재 `(symbol, side, qty)`). `get_buyable_qty`·주문을 같은 가격으로 맞출 것.
+### 🚧 남은 과제 (주문은 되지만 미완성 — 다음 세션은 여기서 시작)
+1. **`get_executions` 실제 구현** (현재 스텁=0 반환). 없어서 ① 봇이 **부분체결을 인식 못함**(324주 주문→77주만 체결돼도 "완료"로 봄), ② 다음 사이클에 77주 보유만으로 `_already_at_target`이 "목표 달성"으로 판단해 잔여를 안 채움. → KIS `inquire-ccnl`(주문체결내역) 또는 **주문 후 보유 재조회**로 구현. 구현 후 `fill_monitor` 부분체결 재시도를 '대기→체결확인→미체결분 취소 후 재주문'으로 안전 복원.
+2. **매수 체결률(100% 전환 보장)**. 현재가 지정가는 **부분체결**됨(324주 중 77주). "100% 전환"이 전략 핵심이므로 marketable-limit(현재가×1.01~1.02 등)을 검토하되 **`get_buyable_qty`와 같은 단가로 맞춰** 수량초과(다른 500)를 피할 것. 1번과 함께 설계.
+3. (낮음) **`/status` 원화 표시**(psamount `exrt`·`ord_psbl_frcr_amt`), `/log` 체결가, DST·월말 거래일 게이트(cron 현재 `30 15 28-31 * *` 근사). — 매매 완성 후.
 
-### 남은 사용자 요청/TODO
-- **`/status`에 원화+달러 둘 다 표시**: psamount output에 `exrt`(환율 1510), `ord_psbl_frcr_amt`(USD) 있음 → 원화는 환산 or 별도 필드. 매수 성공 후 마무리.
-- `get_executions`는 아직 **스텁(0 반환)** — 체결확인/정산이 부정확(미완료 보고·과도 재주문 위험). 주문이 되기 시작하면 `inquire-ccnl`로 구현 또는 보유 재조회 방식으로 교체.
-- 🟢 `/log` 체결가·잔고변화 표시, 알림 이모지 통일, DST·월말 거래일 게이트(현재 cron `30 15 28-31 * *` 근사).
+**주의(현 상태)**: 모의계좌는 부분체결로 **QQQM 77주 보유 + 미체결 247주 대기** 상태일 수 있음. 깨끗한 재검증 시 `/emergency-stop`(청산, 자동 pause됨)→`/resume`→트리거, **명령과 트리거 사이 1~2분 텀**(토큰 제한) 유지.
 
 ---
 
@@ -53,7 +48,7 @@
 | #4 | `token_manager.py`·`position_service.py`·`kis_interface.py`·`kis_client.py` | 토큰 1회 재사용, 무캐시 잔고, KIS 인터페이스 격리 |
 | #5 | `market_data.py` | 월말=각 달 마지막 거래일(결측 폴백), 이상치 ±50% |
 | #6 | `order_executor.py` | 2-leg, 멱등성, floor 정수, 모드 분기 |
-| #7 | `fill_monitor.py` | 부분/미체결 잔여 재주문(최대 N회) |
+| #7 | `fill_monitor.py` | (구)부분 재주문 → **현재 접수 정산만·재주문 비활성화**(중복 매수 방지 `be1bc5f`). get_executions 구현 후 복원 |
 | #9 | `approval_manager.py` | 7일·재요청 상태기계 (ApprovalStore 인터페이스) |
 | #10 | `fallback_controller.py` | 서버6h/휴장2h×3/잔고부족 |
 | #8 | `strategy_cycle.py`·`cron.py` | is_paused→신호→동일신호 무거래→2-leg→정산→사후보고 |
@@ -95,7 +90,7 @@
 6. **`/status` 잔고부족 판정·서버상태**: 현재 web provider는 가장 싼 종목 1주 가격 vs 현금으로 `insufficient_for_next` 판정, KIS 예외 시 `server_ok=False`. 라이브에서 임계·필드 확인.
 
 ## 환경/실행 메모
-- 브랜치: 현재 `phase-c/telegram-commands` 체크아웃 상태(`phase-b/momentum-engine` 위 스택). `main`엔 아직 Phase A/B/C 미반영.
-- 테스트: 레포 루트에서 `python -m pytest` (Python 3.13, pytest 설치됨) → **81 passed, 1 skipped**. 설정은 `pyproject.toml`(pythonpath=".").
+- 브랜치: **`main` = 전부**(Phase A/B/C + 라이브 수정: ORD_DVSN 지정가 `756cab7`·fill_monitor 중복차단 `be1bc5f`). 다른 머신은 `git checkout main && git pull` 후 main 기준.
+- 테스트: 레포 루트에서 `python -m pytest` (Python 3.13, pytest 설치됨) → **84 passed, 1 skipped**. 설정은 `pyproject.toml`(pythonpath=".").
 - 비밀값은 전부 환경변수(`.env.example` 참고, `.env`는 gitignore). 거래종목 QQQM/GLDM 고정, 정수 주문, 기본 모드 `virtual`.
 - 커밋 트레일러: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
