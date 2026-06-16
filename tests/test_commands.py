@@ -69,3 +69,50 @@ def test_emergency_stop_trade_is_marked_in_log(router, store):
     ]
     out = router.handle("/log", 42)
     assert "비상청산" in out
+
+
+# ----- 통제 명령 (#12) -----
+
+def test_pause_asks_confirmation_then_pauses(router, store):
+    out1 = router.handle("/pause", 42)
+    assert "(y/n)" in out1
+    assert store.is_paused() is False  # 확인 전에는 갱신되지 않는다
+    out2 = router.handle("y", 42)
+    assert store.is_paused() is True
+    assert "일시정지" in out2
+
+
+def test_pause_cancelled_on_no(router, store):
+    router.handle("/pause", 42)
+    out = router.handle("n", 42)
+    assert store.is_paused() is False
+    assert "취소" in out
+
+
+def test_pause_when_already_paused_no_pending(router, store):
+    store.set_paused(True)
+    out = router.handle("/pause", 42)
+    assert "이미 일시정지" in out
+    # 펜딩이 생기지 않아야 한다 — 다음 임의 입력은 일반 명령으로 처리
+    assert "알 수 없는 명령" in router.handle("blah", 42)
+
+
+def test_resume_clears_pause(router, store):
+    store.set_paused(True)
+    out = router.handle("/resume", 42)
+    assert store.is_paused() is False
+    assert "재개" in out
+
+
+def test_resume_when_already_running(router, store):
+    out = router.handle("/resume", 42)
+    assert "이미 작동" in out
+
+
+def test_new_command_during_pending_aborts_confirmation(router, store):
+    router.handle("/pause", 42)             # pause_confirm 펜딩
+    out = router.handle("/status", 42)      # 새 /명령 → 펜딩 폐기 + status 실행
+    assert "현재 상태" in out
+    assert store.is_paused() is False
+    # 펜딩이 폐기됐으므로 이후 "y" 는 일반 명령(미지)으로 처리
+    assert "알 수 없는 명령" in router.handle("y", 42)

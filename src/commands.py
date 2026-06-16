@@ -52,14 +52,42 @@ def _fmt_money(value: float) -> str:
         return f"${value}"
 
 
+def _is_yes(text: str) -> bool:
+    return text.strip().lower() in ("y", "yes")
+
+
+@dataclass
+class _Pending:
+    """진행 중인 다중턴 대화(확인/챌린지). chat_id 별로 1건 보관(인메모리)."""
+
+    kind: str                       # pause_confirm | virtual_confirm | real_challenge | estop_confirm | estop_challenge
+    code: Optional[str] = None      # 챌린지 코드(real/estop)
+    expires_at: Optional[float] = None  # 만료 시각(estop 60초)
+
+
 class CommandRouter:
     """텔레그램 명령을 받아 응답 문자열을 돌려준다(발신은 TelegramBot 담당)."""
 
     def __init__(self, deps: CommandDeps) -> None:
         self._deps = deps
+        self._pending: dict[int, _Pending] = {}
 
     def handle(self, text: str, chat_id: int) -> str:
-        return self._command((text or "").strip(), chat_id)
+        stripped = (text or "").strip()
+        pending = self._pending.get(chat_id)
+        if pending is not None and not stripped.startswith("/"):
+            # 펜딩에 대한 응답(y/n·코드) — 1회성으로 소비
+            del self._pending[chat_id]
+            return self._answer_pending(pending, stripped, chat_id)
+        if pending is not None:
+            # 펜딩 중 새 /명령 도착 → 진행 중 확인을 폐기하고 새 명령 처리(오발 방지)
+            del self._pending[chat_id]
+        return self._command(stripped, chat_id)
+
+    def _answer_pending(self, pending: _Pending, text: str, chat_id: int) -> str:
+        if pending.kind == "pause_confirm":
+            return self._on_pause_confirm(text)
+        return self._command(text, chat_id)  # 알 수 없는 펜딩 — 안전 폴백
 
     # ----- 명령 디스패치 -----
     def _command(self, text: str, chat_id: int) -> str:
@@ -72,6 +100,10 @@ class CommandRouter:
             return self._signal()
         if cmd == "/log":
             return self._log(text)
+        if cmd == "/pause":
+            return self._pause(chat_id)
+        if cmd == "/resume":
+            return self._resume()
         return f"알 수 없는 명령입니다: {text!r}\n\n{HELP_TEXT}"
 
     # ----- 조회 (#11) -----
@@ -121,3 +153,27 @@ class CommandRouter:
             mark = " ⚠️비상청산" if t.reason == "emergency_stop" else ""
             lines.append(f"  {t.executed_at} · {verb} {t.ticker} {t.quantity}주 [{t.signal}]{mark}")
         return "\n".join(lines)
+
+    # ----- 통제 (#12) -----
+    def _pause(self, chat_id: int) -> str:
+        if self._deps.store.is_paused():
+            return "이미 일시정지 상태입니다."
+        self._pending[chat_id] = _Pending(kind="pause_confirm")
+        return (
+            "현재 진행 중인 거래가 있다면 취소되고 일시정지됩니다.\n"
+            "일시정지할까요? (y/n)"
+        )
+
+    def _on_pause_confirm(self, text: str) -> str:
+        if not _is_yes(text):
+            return "일시정지를 취소했습니다."
+        # is_paused=True 만 갱신 — 실제 '거래 중단'은 cron 이 기상 시 이 플래그를 보고
+        # 사이클 전체를 건너뛰어 실현한다(KIS 에 주문 취소 API 가 없음).
+        self._deps.store.set_paused(True)
+        return "⏸️ 자동거래를 일시정지했습니다. (다음 월말 사이클을 건너뜁니다)"
+
+    def _resume(self) -> str:
+        if not self._deps.store.is_paused():
+            return "이미 작동 중입니다."
+        self._deps.store.set_paused(False)
+        return "▶️ 자동거래를 재개했습니다."
