@@ -21,6 +21,10 @@ class FakeKis:
     def get_price(self, symbol):
         return self._price
 
+    def get_buyable_qty(self, symbol, price):
+        # 실제 KIS 는 max_ord_psbl_qty 를 주지만, 테스트에선 floor(cash/price) 로 동일 검증.
+        return int(self._cash // price) if price > 0 else 0
+
     def get_open_orders(self):
         return list(self._open)
 

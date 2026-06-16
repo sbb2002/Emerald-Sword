@@ -51,6 +51,7 @@ class KisClient(Protocol):
     def get_holdings(self) -> dict: ...        # {symbol: quantity}
     def get_cash(self) -> float: ...           # 주문 가능 현금(USD)
     def get_price(self, symbol: str) -> float: ...
+    def get_buyable_qty(self, symbol: str, price: float) -> int: ...  # KIS 계산 최대 주문가능 수량
     def get_daily_closes(self, symbol: str, count: int) -> list: ...  # [DailyClose] 최신순
 
     # 쓰기/주문

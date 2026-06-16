@@ -12,7 +12,6 @@
 """
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass
 from typing import Optional
 
@@ -89,9 +88,9 @@ class OrderExecutor:
             elif has_open(target_symbol, "BUY"):
                 legs.append(Leg("BUY", target_symbol, 0, placed=False, skipped_reason="already_pending"))
             else:
-                cash = self._positions.cash()
                 price = self._client.get_price(target_symbol)
-                qty = int(math.floor(cash / price)) if price > 0 else 0
+                # KIS 가 계산한 최대 주문가능 수량을 그대로 사용(수수료·환율 버퍼 반영 → 수량초과 거부 방지).
+                qty = self._client.get_buyable_qty(target_symbol, price) if price > 0 else 0
                 if qty > 0:
                     order = self._client.place_order(target_symbol, "BUY", qty)
                     legs.append(Leg("BUY", target_symbol, qty, placed=True, order=order))

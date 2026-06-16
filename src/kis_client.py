@@ -196,9 +196,10 @@ class HttpKisClient:
                 out = out[0] if out else {}
             # 전체 output 을 로깅 — 실 필드명(USD/원화 주문가능)을 라이브 로그로 확인.
             logger.info("KIS 매수가능금액 rt_cd=%s msg=%s output=%s", data.get("rt_cd"), data.get("msg1"), out)
+            # ord_psbl_frcr_amt = 현금 주문가능(미수 제외). frcr_ord_psbl_amt1 은 증거금 포함이라 쓰지 않는다.
             cash = float(
-                out.get("frcr_ord_psbl_amt1") or out.get("ord_psbl_frcr_amt")
-                or out.get("ovrs_ord_psbl_amt") or 0
+                out.get("ord_psbl_frcr_amt") or out.get("ovrs_ord_psbl_amt")
+                or out.get("frcr_ord_psbl_amt1") or 0
             )
         except Exception:
             logger.exception("KIS 매수가능금액 조회 실패 — 현금 0 으로 처리")
@@ -207,6 +208,34 @@ class HttpKisClient:
         self._cash_at = now
         logger.info("KIS 주문가능현금(USD): $%.2f", cash)
         return cash
+
+    def get_buyable_qty(self, symbol: str, price: float) -> int:
+        """KIS 가 계산한 최대 주문가능 수량(매수가능금액 조회의 max_ord_psbl_qty).
+        floor(cash/price) 는 수수료·환율 버퍼를 무시해 KIS 한도를 초과(→주문 500)하므로
+        KIS 가 계산한 값을 그대로 쓴다."""
+        try:
+            resp = self._send(
+                "GET",
+                f"{self._base}/uapi/overseas-stock/v1/trading/inquire-psamount",
+                headers=self._headers(_PSAMT_TR[self._mode]),
+                params={
+                    "CANO": self._cano,
+                    "ACNT_PRDT_CD": self._acnt_prdt_cd,
+                    "OVRS_EXCG_CD": _TRADE_EXCG.get(symbol, _EXCG),
+                    "OVRS_ORD_UNPR": str(price or 0),
+                    "ITEM_CD": symbol,
+                },
+            )
+            resp.raise_for_status()
+            out = resp.json().get("output", {}) or {}
+            if isinstance(out, list):
+                out = out[0] if out else {}
+            qty = int(float(out.get("max_ord_psbl_qty") or 0))
+        except Exception:
+            logger.exception("KIS 매수가능수량 조회 실패 — 0")
+            qty = 0
+        logger.info("KIS 매수가능수량: %s %d주 (price=%.4f)", symbol, qty, price or 0)
+        return qty
 
     def get_price(self, symbol: str) -> float:
         for excd in _QUOTE_EXCD.get(symbol, _DEFAULT_QUOTE_EXCD):
@@ -265,6 +294,9 @@ class HttpKisClient:
                 "ORD_SVR_DVSN_CD": "0",
             },
         )
+        if resp.status_code >= 400:
+            # 주문 거부 사유 확인용 — 500/4xx 응답 본문을 남긴다(수량초과·주문구분·장시간 등).
+            logger.error("KIS 주문 실패 HTTP %s: %s", resp.status_code, (resp.text or "")[:800])
         resp.raise_for_status()
         data = resp.json()
         ok = str(data.get("rt_cd", "1")) == "0"
