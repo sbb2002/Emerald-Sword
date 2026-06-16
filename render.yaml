@@ -44,7 +44,9 @@ services:
   - type: cron
     name: emerald-sword-cron
     runtime: python
-    plan: free
+    # cron 은 Render 에 무료 플랜이 없는 서비스 타입 → 최소 유료(starter).
+    # 과금은 실행 시간 기준이라 월 1회 수 분 실행이면 비용은 매우 작다(~$0.5/월 수준).
+    plan: starter
     region: singapore
     # Phase A 스텁 스케줄: 월말 근사(28~31일) 매일 UTC 15:30 = KST 00:30 실행.
     # Phase B(#8)에서 "월 마지막 거래일 + 미국 썸머타임" 게이트로 교체한다.
