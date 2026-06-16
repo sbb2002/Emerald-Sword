@@ -5,6 +5,42 @@
 ## Goal
 나스닥100(QQQM)/금(GLDM) 3·6·12개월 복합모멘텀 자동매매 봇 구현. 명세 단일 진실 원천: `blueprints/PRD_momentum_bot.md`. 작업 방식: GitHub 이슈 단위 `/combo-run`(pre-flight → 구현 → syntax-gate → post-patch → 커밋), 소스는 `./src`, 이슈별 커밋 + Phase별 PR.
 
+---
+
+## ⚡ 현재 진행: 라이브 모의(virtual) 매매 디버깅 — **최우선** (2026-06-16 갱신)
+
+> Phase A/B/C 구현·테스트는 끝났고(85 passed, 1 skipped), 지금은 **Render 배포 후 KIS 모의계좌로 실제 매매가 되게 만드는 라이브 디버깅** 단계. KIS 명세가 문서로 안 잡혀서 **코드에 로그 심기 → Render cron "Trigger Run" → 로그로 필드/원인 확정 → 수정 → push(main) → 재트리거** 사이클로 잡아왔다.
+
+### 배포 상태
+- **`main` = 전부**(Phase A+B+C + 라이브 수정). 배포는 `git push origin <branch>:main` 으로 main 갱신 → Render autoDeploy. (로컬은 detached/phase-c 였음; 다른 머신에선 `git pull` 후 `main` 기준으로 작업.)
+- Render: **web=free(유휴 spin-down, keep-alive 미사용)**, **cron=starter(유료, 월 1회)**. webhook = `https://<host>/webhook/<BOT_TOKEN>`. `/status`·로그로 동작 확인.
+- KIS **모의계좌**(CANO 50162185-01, `ACNT_PRDT_CD=01` 검증됨). 기본 시드 **$100,000 USD**(천만원 아님). 모의는 매수 시 자동환전.
+- 로깅: `src/logging_setup.py`(stdout INFO). KIS 호출/주문/잔고가 전부 로그로 찍힘.
+
+### 라이브로 확정·해결된 것 (커밋)
+- 시세 EXCD는 **3자리**(QQQM=`NAS`, GLDM=`AMS`), 주문/잔고는 4자리(`NASD`/`AMEX`). 월봉(`GUBN=2`)로 13개월+ 이력 확보. (`d9fe24f`)
+- **초당 호출 제한** 회피: 모든 KIS 호출에 throttle 1.1초 + 5xx 재시도(`_send`). (`527cf90`) — 잔고/시세 500 해결.
+- 현금: `inquire-balance` output2엔 현금 없음(손익 summary). **`inquire-psamount`(VTTS3007R)** 의 `ord_psbl_frcr_amt`($100k)로 읽음. (`82a34c8`)
+- 매수 수량: `floor(cash/price)`는 수수료·환율 버퍼로 KIS 한도 초과 → **`max_ord_psbl_qty`** 그대로 사용(`get_buyable_qty`). (`9859f7a`)
+- 매매 판단 자가치유(직전신호→실보유 기준) + /status 평가금액·총자산·이모지. (`8404b7a`)
+
+### 🚧 현재 블로커 — 매수 주문 500
+`place_order`(`/uapi/overseas-stock/v1/trading/order`)가 500. rate limit 아님(1초 간격 재시도 3회 모두 실패=영구거부). 수량초과는 위에서 수정함. **남은 의심: ① 주문구분 — `OVRS_ORD_UNPR="0"`(시장가)가 미국 지정가와 안 맞을 가능성, ② 장외시간**(직전 트리거가 KST 07:34=미국장 마감). 주문 500 시 **응답 본문을 로깅**하도록 해둠(`9859f7a`).
+
+### ▶ 다음 단계 (이걸 하면 됨)
+1. **미국 장중(KST 22:30~05:00)** 에 Render 대시보드 → `emerald-sword-cron` → **"Trigger Run"**.
+2. 로그에서 확인:
+   - `KIS 매수가능수량: QQQM 323주` → `KIS 주문: BUY QQQM 323주 → rt_cd=0 ODNO=... msg=...` 면 **체결 성공**.
+   - `KIS 주문 실패 HTTP 500: {본문}` 이면 그 **본문**이 사유(수량/주문구분/장시간)를 확정.
+3. 500이 지속되고 본문이 주문가격/구분 문제면 → `place_order`의 `OVRS_ORD_UNPR`을 실제 지정가(예: 현재가×1.02)로, 필요시 `ORD_DVSN` 추가. **`place_order` 시그니처에 price 추가**가 필요할 수 있음(현재 `(symbol, side, qty)`). `get_buyable_qty`·주문을 같은 가격으로 맞출 것.
+
+### 남은 사용자 요청/TODO
+- **`/status`에 원화+달러 둘 다 표시**: psamount output에 `exrt`(환율 1510), `ord_psbl_frcr_amt`(USD) 있음 → 원화는 환산 or 별도 필드. 매수 성공 후 마무리.
+- `get_executions`는 아직 **스텁(0 반환)** — 체결확인/정산이 부정확(미완료 보고·과도 재주문 위험). 주문이 되기 시작하면 `inquire-ccnl`로 구현 또는 보유 재조회 방식으로 교체.
+- 🟢 `/log` 체결가·잔고변화 표시, 알림 이모지 통일, DST·월말 거래일 게이트(현재 cron `30 15 28-31 * *` 근사).
+
+---
+
 ## Current Progress
 
 ### ✅ Phase A (워킹 스켈레톤) — PR #15 (`phase-a/skeleton` → `main`), 리뷰 대기
