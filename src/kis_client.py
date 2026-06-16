@@ -10,6 +10,7 @@ build_kis_client() 가 trading_mode 에 따라 적절한 URL·계좌·tr_id 세�
 """
 from __future__ import annotations
 
+import logging
 import time
 from typing import Optional
 
@@ -17,6 +18,8 @@ import httpx
 
 from .config import Settings
 from .kis_interface import DailyClose, Execution, OrderResult, TokenInfo
+
+logger = logging.getLogger(__name__)
 
 # tr_id — 실전/모의 접두가 다르다. (TTTT*/TTTS* = 실전, VTTT*/VTTS* = 모의)
 _TR = {
@@ -48,7 +51,7 @@ class HttpKisClient:
         cano: str,
         acnt_prdt_cd: str,
         mode: str,
-        timeout: float = 10.0,
+        timeout: float = 30.0,  # KIS 가 해외(Render 싱가포르)에서 느릴 수 있어 여유. 토큰 ReadTimeout 대응.
     ) -> None:
         self._app_key = app_key
         self._app_secret = app_secret
@@ -61,6 +64,8 @@ class HttpKisClient:
 
     # ----- 인증 -----
     def issue_token(self) -> TokenInfo:
+        logger.info("KIS 토큰 발급 요청: %s/oauth2/tokenP (mode=%s, timeout=%ss)",
+                    self._base, self._mode, self._timeout)
         resp = httpx.post(
             f"{self._base}/oauth2/tokenP",
             json={
