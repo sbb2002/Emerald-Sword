@@ -270,3 +270,24 @@ def test_emergency_stop_within_timeout_executes(store):
     out = r.handle("424242", 42)
     assert "청산 완료" in out
     assert store.is_paused() is True
+
+
+# ----- 예외 가드(외부 호출 실패가 webhook 을 500 내지 않게) -----
+
+def _boom():
+    raise RuntimeError("KIS down")
+
+
+def test_handler_catches_provider_error_returns_friendly(store):
+    r = CommandRouter(CommandDeps(store=store, status_provider=_boom, signal_provider=_boom))
+    assert "오류가 발생" in r.handle("/status", 42)   # 가드 없으면 raise
+    assert "오류가 발생" in r.handle("/signal", 42)
+
+
+def test_bot_replies_friendly_and_does_not_raise_on_error(store, sender):
+    r = CommandRouter(CommandDeps(store=store, signal_provider=_boom))
+    bot = TelegramBot(42, ModeManager(store), sender, store=store, router=r)
+    handled = bot.handle_update(_update(42, "/signal"))  # 예외가 전파되면 테스트가 깨진다
+    assert handled is True
+    assert sender.sent[-1][1].startswith("[모의]")        # 모드 태그 유지
+    assert "오류가 발생" in sender.sent[-1][1]

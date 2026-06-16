@@ -111,5 +111,9 @@ async def telegram_webhook(token: str, request: Request) -> Response:
         update: dict[str, Any] = await request.json()
     except Exception:
         return Response(status_code=200)  # 잘못된 본문 — 텔레그램 재시도 막기 위해 200
-    await run_in_threadpool(request.app.state.bot.handle_update, update)
+    try:
+        await run_in_threadpool(request.app.state.bot.handle_update, update)
+    except Exception:
+        # 명령 처리/발신 실패가 텔레그램 재시도 폭주로 번지지 않도록 항상 200(상세는 서버 로그).
+        pass
     return Response(status_code=200)  # 텔레그램에는 항상 200

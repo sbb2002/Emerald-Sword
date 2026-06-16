@@ -11,10 +11,13 @@ Phase A 의 무상태 dispatch() 를 CommandRouter 로 대체한다.
 """
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+
+logger = logging.getLogger(__name__)
 
 HELP_TEXT = (
     "복합모멘텀 QQQM/GLDM 봇 — 명령어\n"
@@ -84,15 +87,20 @@ class CommandRouter:
 
     def handle(self, text: str, chat_id: int) -> str:
         stripped = (text or "").strip()
-        pending = self._pending.get(chat_id)
-        if pending is not None and not stripped.startswith("/"):
-            # 펜딩에 대한 응답(y/n·코드) — 1회성으로 소비
-            del self._pending[chat_id]
-            return self._answer_pending(pending, stripped, chat_id)
-        if pending is not None:
-            # 펜딩 중 새 /명령 도착 → 진행 중 확인을 폐기하고 새 명령 처리(오발 방지)
-            del self._pending[chat_id]
-        return self._command(stripped, chat_id)
+        # 펜딩은 1회성으로 꺼낸다(있으면 소비/폐기). 비-/명령이면 펜딩 응답으로, 그 외엔 새 명령으로.
+        pending = self._pending.pop(chat_id, None)
+        try:
+            if pending is not None and not stripped.startswith("/"):
+                return self._answer_pending(pending, stripped, chat_id)
+            return self._command(stripped, chat_id)
+        except Exception:
+            # KIS/네트워크 등 외부 호출 실패가 webhook 을 500 내지 않도록 흡수한다.
+            # 사용자에겐 친절히 안내하고, 원인 스택은 서버 로그(Render)로 남긴다.
+            logger.exception("명령 처리 실패 (chat_id=%s)", chat_id)
+            return (
+                "⚠️ 명령 처리 중 오류가 발생했습니다. 잠시 후 다시 시도해 주세요.\n"
+                "계속되면 KIS 연결·키 설정을 확인하세요. (/status 로 서버 상태 확인)"
+            )
 
     def _answer_pending(self, pending: _Pending, text: str, chat_id: int) -> str:
         if pending.kind == "pause_confirm":
