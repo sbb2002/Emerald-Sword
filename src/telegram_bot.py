@@ -10,12 +10,15 @@ from __future__ import annotations
 
 from typing import Any, Optional, Protocol
 
-from .commands import dispatch
 from .mode_manager import ModeManager
 
 
 class TelegramSender(Protocol):
     def send_message(self, chat_id: int, text: str) -> None: ...
+
+
+class CommandHandler(Protocol):
+    def handle(self, text: str, chat_id: int) -> str: ...
 
 
 class TelegramBot:
@@ -25,11 +28,13 @@ class TelegramBot:
         mode_manager: ModeManager,
         sender: TelegramSender,
         store: Any = None,
+        router: Optional[CommandHandler] = None,
     ) -> None:
         self._allowed_chat_id = allowed_chat_id
         self._mode = mode_manager
         self._sender = sender
         self._store = store
+        self._router = router
 
     def is_authorized(self, chat_id: Optional[int]) -> bool:
         return chat_id is not None and chat_id == self._allowed_chat_id
@@ -50,6 +55,8 @@ class TelegramBot:
         chat_id, text = self.extract(update)
         if not self.is_authorized(chat_id):
             return False  # 미등록 chat_id 무시
-        reply = dispatch(text)
+        if self._router is None:
+            return False  # 라우터 미배선(예: cron 은 발신만 사용) — 명령 처리 안 함
+        reply = self._router.handle(text, chat_id)
         self.send_message(reply, chat_id=chat_id)
         return True

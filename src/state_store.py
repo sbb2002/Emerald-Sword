@@ -6,11 +6,25 @@ Phase A 범위: is_paused, trading_mode 읽기/쓰기.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Optional
 
 from .db import get_connection
 
 VALID_MODES = ("virtual", "real")
+
+
+@dataclass(frozen=True)
+class TradeRecord:
+    """trade_log 한 행의 읽기 전용 뷰(/log 표시용)."""
+
+    executed_at: str            # "YYYY-MM-DD HH:MM"
+    mode: str                   # virtual | real
+    signal: Optional[str]       # NASDAQ | GOLD | CASH
+    side: Optional[str]         # BUY | SELL
+    ticker: Optional[str]       # QQQM | GLDM
+    quantity: Optional[int]
+    reason: Optional[str]       # monthly_signal | emergency_stop | ...
 
 
 class StateStore:
@@ -88,3 +102,24 @@ class StateStore:
                         " VALUES (%s, %s, %s, %s, %s, %s, %s, %s);",
                         (mode, signal, leg.side, leg.symbol, leg.quantity, reason, balance_before, balance_after),
                     )
+
+    def read_trades(self, limit: Optional[int] = None) -> list:
+        """거래 로그를 최신순으로 읽는다. limit=None 이면 전체(/log [N])."""
+        sql = (
+            "SELECT executed_at, mode, signal, side, ticker, quantity, reason"
+            " FROM trade_log ORDER BY executed_at DESC, id DESC"
+        )
+        params: tuple = ()
+        if limit is not None:
+            sql += " LIMIT %s"
+            params = (limit,)
+        with get_connection(self._database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql + ";", params)
+                rows = cur.fetchall()
+        out: list = []
+        for r in rows:
+            ts = r[0]
+            ts = ts.isoformat(sep=" ", timespec="minutes") if hasattr(ts, "isoformat") else str(ts)
+            out.append(TradeRecord(ts, r[1], r[2], r[3], r[4], int(r[5]) if r[5] is not None else None, r[6]))
+        return out

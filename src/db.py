@@ -8,11 +8,11 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import Iterator
 
-import psycopg
-
 
 @contextmanager
 def get_connection(database_url: str) -> Iterator["psycopg.Connection"]:
+    import psycopg  # 지연 import — state_store/TradeRecord 를 psycopg 없이 import 가능하게(테스트 격리)
+
     conn = psycopg.connect(database_url)
     try:
         yield conn
