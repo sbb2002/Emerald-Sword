@@ -5,7 +5,8 @@
 
 - 구현 명세 단일 진실 원천: [`blueprints/PRD_momentum_bot.md`](blueprints/PRD_momentum_bot.md)
 - 사용자 사전 준비(계정·키 발급): [`blueprints/SETUP_사용자_준비절차.md`](blueprints/SETUP_사용자_준비절차.md)
-- 배포·검증·운영 매뉴얼(현재 구현 기준): [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md)
+- 모의투자 검증 가이드(순서별 실행 런북): [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md)
+- 상태 리포트(구현 스냅샷): [`docs/reports/`](docs/reports/)
 
 ## 아키텍처
 
@@ -21,7 +22,7 @@
 - **Phase A (워킹 스켈레톤)** — 2서비스 배포 골격, DB 마이그레이션, 텔레그램 배선(`/help`·`/healthcheck`), Cron 스텁. ✅
 - **Phase B** — MomentumEngine, KIS 연동, OrderExecutor, 폴백·승인, cron 전략 사이클 (이슈 #3–#10). ✅
 - **Phase C** — 텔레그램 명령(`/status`·`/signal`·`/log`·`/pause`·`/resume`·`/virtual`·`/real`·`/emergency-stop`), 모드 전환·챌린지 (이슈 #11–#14). ✅
-- 테스트: `python -m pytest` → 81 passed, 1 skipped. **실운영 전 KIS 어댑터 라이브 검증 필요** → [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) §4.
+- 테스트: `python -m pytest` → 83 passed, 1 skipped. **실운영 전 KIS 어댑터 라이브 검증 필요** → [`docs/USER_MANUAL.md`](docs/USER_MANUAL.md) §4.
 
 ## 로컬 실행
 
