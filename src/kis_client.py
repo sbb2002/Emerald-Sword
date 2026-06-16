@@ -68,6 +68,8 @@ class HttpKisClient:
         self._mode = mode if mode in _TR else "virtual"
         self._timeout = timeout
         self._token: Optional[str] = None
+        self._balance: Optional[dict] = None   # inquire-balance 응답 캐시(holdings/cash 가 공유)
+        self._balance_at: float = 0.0
 
     # ----- 인증 -----
     def issue_token(self) -> TokenInfo:
@@ -100,7 +102,13 @@ class HttpKisClient:
         }
 
     # ----- 읽기 -----
-    def get_holdings(self) -> dict:
+    def _inquire_balance(self) -> dict:
+        """해외주식 잔고를 1회 조회하고 짧게 캐시한다. get_holdings/get_cash 가 공유해
+        같은 잔고를 두 번 호출(→ KIS 초당 제한으로 2번째가 500)하는 것을 막는다.
+        주문이 나가면 place_order 에서 캐시를 무효화한다."""
+        now = time.time()
+        if self._balance is not None and (now - self._balance_at) < 3.0:
+            return self._balance
         resp = httpx.get(
             f"{self._base}/uapi/overseas-stock/v1/trading/inquire-balance",
             headers=self._headers(_TR[self._mode]["balance"]),
@@ -115,32 +123,30 @@ class HttpKisClient:
             timeout=self._timeout,
         )
         resp.raise_for_status()
+        self._balance = resp.json()
+        self._balance_at = now
+        return self._balance
+
+    def get_holdings(self) -> dict:
+        data = self._inquire_balance()
         out: dict = {}
-        for row in resp.json().get("output1", []):
+        for row in data.get("output1", []) or []:
             symbol = row.get("ovrs_pdno") or row.get("pdno")
-            qty = int(float(row.get("ovrs_cblc_qty", 0)))
+            qty = int(float(row.get("ovrs_cblc_qty", 0) or 0))
             if symbol and qty:
                 out[symbol] = qty
+        logger.info("KIS 잔고 보유: %d종목 %s", len(out), out)
         return out
 
     def get_cash(self) -> float:
-        resp = httpx.get(
-            f"{self._base}/uapi/overseas-stock/v1/trading/inquire-balance",
-            headers=self._headers(_TR[self._mode]["balance"]),
-            params={
-                "CANO": self._cano,
-                "ACNT_PRDT_CD": self._acnt_prdt_cd,
-                "OVRS_EXCG_CD": _EXCG,
-                "TR_CRCY_CD": "USD",
-                "CTX_AREA_FK200": "",
-                "CTX_AREA_NK200": "",
-            },
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        output2 = resp.json().get("output2", {})
-        # 주문 가능 외화 현금 — 필드명 라이브 확인 필요
-        return float(output2.get("frcr_ord_psbl_amt1", output2.get("ord_psbl_frcr_amt", 0)))
+        output2 = self._inquire_balance().get("output2", {})
+        if isinstance(output2, list):  # output2 가 list 로 오는 경우 정규화
+            output2 = output2[0] if output2 else {}
+        cash = float(output2.get("frcr_ord_psbl_amt1") or output2.get("ord_psbl_frcr_amt") or 0)
+        # 현금이 0 이면 필드명이 다를 수 있어 keys 를 로깅(라이브 확인용).
+        logger.info("KIS 주문가능현금: $%.2f (output2 keys=%s)",
+                    cash, list(output2.keys()) if isinstance(output2, dict) else type(output2).__name__)
+        return cash
 
     def get_price(self, symbol: str) -> float:
         for excd in _QUOTE_EXCD.get(symbol, _DEFAULT_QUOTE_EXCD):
@@ -183,6 +189,7 @@ class HttpKisClient:
 
     # ----- 주문 -----
     def place_order(self, symbol: str, side: str, quantity: int) -> OrderResult:
+        self._balance = None  # 주문 후 잔고 변동 → 캐시 무효화
         tr = _TR[self._mode]["buy" if side == "BUY" else "sell"]
         resp = httpx.post(
             f"{self._base}/uapi/overseas-stock/v1/trading/order",
@@ -202,6 +209,8 @@ class HttpKisClient:
         data = resp.json()
         ok = str(data.get("rt_cd", "1")) == "0"
         order_id = (data.get("output", {}) or {}).get("ODNO", "")
+        logger.info("KIS 주문: %s %s %d주 → rt_cd=%s ODNO=%s msg=%s",
+                    side, symbol, quantity, data.get("rt_cd"), order_id, data.get("msg1", ""))
         return OrderResult(
             order_id=order_id, symbol=symbol, side=side, quantity=int(quantity), accepted=ok, raw=data
         )
@@ -222,7 +231,7 @@ class HttpKisClient:
         )
         resp.raise_for_status()
         out = []
-        for row in resp.json().get("output", []):
+        for row in resp.json().get("output", []) or []:
             out.append(
                 OrderResult(
                     order_id=row.get("odno", ""),
@@ -233,10 +242,12 @@ class HttpKisClient:
                     raw=row,
                 )
             )
+        logger.info("KIS 미체결: %d건", len(out))
         return out
 
     def get_executions(self, order_id: str) -> Execution:
-        # 체결 조회 — 라이브에서 inquire-ccnl 응답 매핑 확인.
+        # 체결 조회 — 라이브에서 inquire-ccnl 응답 매핑 확인. 아직 스텁(0 반환)이라 체결확인이 부정확.
+        logger.warning("KIS get_executions 스텁(체결 0 반환) — 체결확인/정산이 부정확할 수 있음. order_id=%s", order_id)
         return Execution(order_id=order_id, symbol="", side="", filled_qty=0, avg_price=0.0)
 
 
