@@ -38,7 +38,14 @@ _TR = {
 }
 _PRICE_TR = "HHDFS00000300"
 _DAILY_TR = "HHDFS76240000"
-_EXCG = "NASD"  # 미국 나스닥. QQQM/GLDM 모두 NASD/AMEX 등 — 라이브에서 확인.
+# 주문·잔고용 거래소(OVRS_EXCG_CD, 4자리). QQQM=NASD, GLDM=AMEX(NYSE Arca) — 라이브 주문 시 종목별 적용 필요.
+_EXCG = "NASD"
+# 시세용 거래소(EXCD, 3자리 — 주문용과 코드 체계가 다름!). 거래소 분류 불확실성 대비 후보를 순서대로 시도.
+_QUOTE_EXCD = {
+    "QQQM": ("NAS",),          # 나스닥
+    "GLDM": ("AMS", "NYS"),    # NYSE Arca ETF → 아멕스(AMS) 우선, 빈 결과면 뉴욕(NYS)
+}
+_DEFAULT_QUOTE_EXCD = ("NAS", "NYS", "AMS")
 
 
 class HttpKisClient:
@@ -136,29 +143,42 @@ class HttpKisClient:
         return float(output2.get("frcr_ord_psbl_amt1", output2.get("ord_psbl_frcr_amt", 0)))
 
     def get_price(self, symbol: str) -> float:
-        resp = httpx.get(
-            f"{self._base}/uapi/overseas-price/v1/quotations/price",
-            headers=self._headers(_PRICE_TR),
-            params={"AUTH": "", "EXCD": _EXCG, "SYMB": symbol},
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        return float(resp.json().get("output", {}).get("last", 0))
+        for excd in _QUOTE_EXCD.get(symbol, _DEFAULT_QUOTE_EXCD):
+            resp = httpx.get(
+                f"{self._base}/uapi/overseas-price/v1/quotations/price",
+                headers=self._headers(_PRICE_TR),
+                params={"AUTH": "", "EXCD": excd, "SYMB": symbol},
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            price = float(resp.json().get("output", {}).get("last") or 0)
+            if price > 0:
+                return price
+        return 0.0
 
     def get_daily_closes(self, symbol: str, count: int) -> list:
-        resp = httpx.get(
-            f"{self._base}/uapi/overseas-price/v1/quotations/dailyprice",
-            headers=self._headers(_DAILY_TR),
-            params={"AUTH": "", "EXCD": _EXCG, "SYMB": symbol, "GUBN": "0", "BYMD": "", "MODP": "1"},
-            timeout=self._timeout,
-        )
-        resp.raise_for_status()
-        rows = resp.json().get("output2", [])
+        # 시세 EXCD 는 3자리(NAS/NYS/AMS) — 종목별 후보를 순서대로 시도해 빈 결과를 회피.
+        # GUBN="2"(월봉)로 조회 → 한 번에 충분한 월말 종가 이력 확보(일봉 GUBN="0"은 1회 ~100일이라 13개월 부족).
+        rows: list = []
+        used = ""
+        for excd in _QUOTE_EXCD.get(symbol, _DEFAULT_QUOTE_EXCD):
+            resp = httpx.get(
+                f"{self._base}/uapi/overseas-price/v1/quotations/dailyprice",
+                headers=self._headers(_DAILY_TR),
+                params={"AUTH": "", "EXCD": excd, "SYMB": symbol, "GUBN": "2", "BYMD": "", "MODP": "1"},
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            rows = resp.json().get("output2", []) or []
+            used = excd
+            if rows:
+                break
+        logger.info("KIS 기간시세(월봉): symbol=%s EXCD=%s → %d rows", symbol, used, len(rows))
         closes = []
         for row in rows[:count]:
             d = row.get("xymd", "")
             iso = f"{d[0:4]}-{d[4:6]}-{d[6:8]}" if len(d) == 8 else d
-            closes.append(DailyClose(date=iso, close=float(row.get("clos", 0))))
+            closes.append(DailyClose(date=iso, close=float(row.get("clos") or 0)))
         return closes  # 최신순
 
     # ----- 주문 -----
