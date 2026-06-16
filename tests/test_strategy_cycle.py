@@ -209,3 +209,17 @@ def test_incomplete_fill_triggers_fallback():
     result = run_cycle(deps)
     assert result.status == INCOMPLETE
     assert f["fallback"].incomplete_calls == 1
+
+
+def test_insufficient_cash_not_reported_as_completed():
+    # 현금 부족으로 낸 주문이 0건이면 '전환 완료'가 아니라 '잔고 부족'으로 보고.
+    deps, f = _build(FakeStore(), positions=FakePositions([Pos({}, 0.0)]))
+    f["executor"]._t = TransitionResult(
+        "NASDAQ", "QQQM",
+        [Leg("BUY", "QQQM", 0, placed=False, skipped_reason="insufficient_cash")],
+        complete=True,
+    )
+    result = run_cycle(deps)
+    assert result.status == INCOMPLETE
+    msg = f["sender"].sent[-1][1]
+    assert "현금" in msg and "부족" in msg

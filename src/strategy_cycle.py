@@ -109,7 +109,18 @@ def run_cycle(deps: CycleDeps) -> CycleResult:
         deps.fallback.on_incomplete_fill()
         return CycleResult(INCOMPLETE, target=signal.target)
 
-    # 6) 사후 체결 보고 + 거래 로그
+    # 7) 낸 주문이 하나도 없으면(예: 주문가능 현금 부족) '전환 완료'로 보고하지 않는다.
+    if not transition.placed_orders:
+        if any(leg.skipped_reason == "insufficient_cash" for leg in transition.legs):
+            deps.notify(
+                f"⚠️ {deps.now().strftime('%Y-%m')} 신호 {signal.target} — 주문가능 현금이 부족해 "
+                f"매수하지 못했습니다. 계좌의 주문가능 잔고를 확인하세요."
+            )
+        else:
+            deps.notify(f"ℹ️ {deps.now().strftime('%Y-%m')} 신호 {signal.target} — 낸 주문 없음(무거래).")
+        return CycleResult(INCOMPLETE, target=signal.target)
+
+    # 8) 사후 체결 보고 + 거래 로그
     after = deps.positions.snapshot()
     deps.store.record_trade(
         mode=deps.mode,

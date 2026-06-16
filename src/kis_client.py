@@ -38,6 +38,8 @@ _TR = {
 }
 _PRICE_TR = "HHDFS00000300"
 _DAILY_TR = "HHDFS76240000"
+# 매수가능금액(주문가능 외화현금) 조회 — inquire-balance output2 엔 현금이 없어 별도 endpoint 사용.
+_PSAMT_TR = {"real": "TTTS3007R", "virtual": "VTTS3007R"}
 # 주문·잔고용 거래소(OVRS_EXCG_CD, 4자리). 잔고/미체결 조회는 _EXCG(대표값) 사용(라이브 검증됨).
 _EXCG = "NASD"
 # 주문(place_order)은 종목별 거래소로. QQQM=NASD(나스닥), GLDM=AMEX(NYSE Arca).
@@ -71,8 +73,10 @@ class HttpKisClient:
         self._mode = mode if mode in _TR else "virtual"
         self._timeout = timeout
         self._token: Optional[str] = None
-        self._balance: Optional[dict] = None   # inquire-balance 응답 캐시(holdings/cash 가 공유)
+        self._balance: Optional[dict] = None   # inquire-balance 응답 캐시(holdings)
         self._balance_at: float = 0.0
+        self._cash: Optional[float] = None     # 주문가능현금 캐시(psamount)
+        self._cash_at: float = 0.0
         self._min_interval = min_interval
         self._last_call_at: float = 0.0
 
@@ -164,13 +168,44 @@ class HttpKisClient:
         return out
 
     def get_cash(self) -> float:
-        output2 = self._inquire_balance().get("output2", {})
-        if isinstance(output2, list):  # output2 가 list 로 오는 경우 정규화
-            output2 = output2[0] if output2 else {}
-        cash = float(output2.get("frcr_ord_psbl_amt1") or output2.get("ord_psbl_frcr_amt") or 0)
-        # 현금이 0 이면 필드명이 다를 수 있어 keys 를 로깅(라이브 확인용).
-        logger.info("KIS 주문가능현금: $%.2f (output2 keys=%s)",
-                    cash, list(output2.keys()) if isinstance(output2, dict) else type(output2).__name__)
+        """주문가능 외화현금(USD). inquire-balance output2 는 손익 summary 라 현금이 없어
+        매수가능금액(inquire-psamount)에서 읽는다. 모의투자는 매수 시 자동환전이라 원화가
+        주문가능금액에 반영된다. 실패 시 0 으로 처리(상위가 '잔고부족'으로 보고)."""
+        now = time.time()
+        if self._cash is not None and (now - self._cash_at) < 3.0:
+            return self._cash
+        cash = 0.0
+        try:
+            price = self.get_price("QQQM") or 1.0
+            resp = self._send(
+                "GET",
+                f"{self._base}/uapi/overseas-stock/v1/trading/inquire-psamount",
+                headers=self._headers(_PSAMT_TR[self._mode]),
+                params={
+                    "CANO": self._cano,
+                    "ACNT_PRDT_CD": self._acnt_prdt_cd,
+                    "OVRS_EXCG_CD": "NASD",
+                    "OVRS_ORD_UNPR": str(price),
+                    "ITEM_CD": "QQQM",
+                },
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            out = data.get("output", {}) or {}
+            if isinstance(out, list):
+                out = out[0] if out else {}
+            # 전체 output 을 로깅 — 실 필드명(USD/원화 주문가능)을 라이브 로그로 확인.
+            logger.info("KIS 매수가능금액 rt_cd=%s msg=%s output=%s", data.get("rt_cd"), data.get("msg1"), out)
+            cash = float(
+                out.get("frcr_ord_psbl_amt1") or out.get("ord_psbl_frcr_amt")
+                or out.get("ovrs_ord_psbl_amt") or 0
+            )
+        except Exception:
+            logger.exception("KIS 매수가능금액 조회 실패 — 현금 0 으로 처리")
+            cash = 0.0
+        self._cash = cash
+        self._cash_at = now
+        logger.info("KIS 주문가능현금(USD): $%.2f", cash)
         return cash
 
     def get_price(self, symbol: str) -> float:
@@ -214,7 +249,7 @@ class HttpKisClient:
 
     # ----- 주문 -----
     def place_order(self, symbol: str, side: str, quantity: int) -> OrderResult:
-        self._balance = None  # 주문 후 잔고 변동 → 캐시 무효화
+        self._balance = self._cash = None  # 주문 후 잔고·현금 변동 → 캐시 무효화
         tr = _TR[self._mode]["buy" if side == "BUY" else "sell"]
         resp = self._send(
             "POST",
