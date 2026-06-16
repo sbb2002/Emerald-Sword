@@ -280,6 +280,17 @@ class HttpKisClient:
     def place_order(self, symbol: str, side: str, quantity: int) -> OrderResult:
         self._balance = self._cash = None  # 주문 후 잔고·현금 변동 → 캐시 무효화
         tr = _TR[self._mode]["buy" if side == "BUY" else "sell"]
+        # 미국주식은 정규장 시장가 미지원 → 현재가 기준 '지정가(ORD_DVSN=00)'로 낸다.
+        # 단가 0 또는 ORD_DVSN 누락이 KIS IGW00019("주문구분을 확인해주세요")의 직접 원인.
+        # 단가는 현재가 그대로(버퍼 없음) — 매수수량(get_buyable_qty)이 현재가 기준이라
+        # 단가를 올리면 주문총액이 가용현금을 넘어 '수량초과'로 또 거부된다.
+        price = round(self.get_price(symbol) or 0.0, 2)
+        if price <= 0:
+            logger.error("KIS 주문 단가 조회 실패(price=0) — %s %s %d주 보류", side, symbol, quantity)
+            return OrderResult(
+                order_id="", symbol=symbol, side=side, quantity=int(quantity),
+                accepted=False, raw={"error": "no_price"},
+            )
         resp = self._send(
             "POST",
             f"{self._base}/uapi/overseas-stock/v1/trading/order",
@@ -290,7 +301,8 @@ class HttpKisClient:
                 "OVRS_EXCG_CD": _TRADE_EXCG.get(symbol, _EXCG),
                 "PDNO": symbol,
                 "ORD_QTY": str(int(quantity)),
-                "OVRS_ORD_UNPR": "0",  # 0 = 시장가 성격(라이브에서 주문구분 확인)
+                "OVRS_ORD_UNPR": f"{price:.2f}",  # 지정가 단가(현재가) — 미국주식 시장가 미지원
+                "ORD_DVSN": "00",                  # 00=지정가 (필수! 누락이 IGW00019의 직접 원인)
                 "ORD_SVR_DVSN_CD": "0",
             },
         )
