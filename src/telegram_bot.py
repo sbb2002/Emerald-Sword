@@ -62,6 +62,14 @@ class TelegramBot:
         if self._router is None:
             logger.warning("router 미배선 — 명령 처리 안 함 (chat_id=%s)", chat_id)
             return False  # 라우터 미배선(예: cron 은 발신만 사용) — 명령 처리 안 함
+        # 멱등성 게이트: Telegram 은 webhook 응답이 느리면(특히 Render free-tier cold-start +
+        # /status 의 다중 KIS 호출) 같은 update 를 재전송한다. update_id 를 1회만 통과시켜
+        # 같은 명령이 두 번 처리·두 번 응답되는 것을 막는다(store 미보유 시엔 그대로 통과).
+        claim = getattr(self._store, "claim_update", None)
+        update_id = update.get("update_id")
+        if callable(claim) and update_id is not None and not claim(update_id):
+            logger.info("중복 update_id=%s 무시 — Telegram 재전송 (이미 처리됨)", update_id)
+            return False
         logger.info("명령 수신: chat_id=%s text=%r", chat_id, text)
         reply = self._router.handle(text, chat_id)
         self.send_message(reply, chat_id=chat_id)

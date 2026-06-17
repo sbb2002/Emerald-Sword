@@ -9,7 +9,7 @@
 
 ## ⚡ 현재 상태 (2026-06-17 갱신)
 
-> Phase A/B/C 구현·테스트 완료(**87 passed, 1 skipped**). Render 배포 + KIS 모의계좌로 실제 매수까지 성공. 현재는 라이브 안정화 단계.
+> Phase A/B/C 구현·테스트 완료(**90 passed, 1 skipped**). Render 배포 + KIS 모의계좌로 실제 매수까지 성공. 현재는 라이브 안정화 단계.
 
 ### 배포 상태
 - **`main` = 배포 브랜치**(autoDeploy). 다른 머신: `git checkout main && git pull` 후 main 기준 작업.
@@ -26,29 +26,35 @@
 - 중복매수 차단 — fill_monitor 접수 기준 정산 + 재주문 비활성화 (`be1bc5f`)
 - **사후 보고 실체결 기반** — 부분체결 정직 보고 (`87a3dee`)
 
+### 🔧 이번 세션 수정 (2026-06-17) — 배포 후 라이브 검증 필요
+
+- **`/status` 중복 출력 버그 해결** — webhook 멱등성 도입.
+  - 원인: Telegram 은 webhook 응답이 느리면(Render free cold-start + `/status` 의 다중 KIS 호출 throttle) **같은 `update_id` 를 재전송** → 재전송분이 별도 요청으로 다시 처리되어 메시지 2개. (코드가 `send_message` 를 2번 부르는 게 아님 — 코드상 배제.)
+  - 수정: `update_id` 를 1회만 통과시키는 claim 게이트.
+    - `src/migrations/002_processed_updates.sql` — `processed_updates(update_id PK)` 테이블.
+    - `StateStore.claim_update(update_id)` — `INSERT ... ON CONFLICT DO NOTHING` + `rowcount` 으로 원자적 판정(동시 재시도까지 1회).
+    - `TelegramBot.handle_update` — 인증·라우터 통과 후 claim, 중복이면 `False` 반환(무시).
+  - 설계 메모: Render free 는 "200 먼저 응답 후 백그라운드 처리"가 spin-down 으로 작업이 죽을 위험 → **동기 처리 유지 + DB dedup** 선택. 다중턴 흐름(/pause→y, /real→코드)은 각 턴이 별개 update_id 라 영향 없음.
+  - 테스트: `test_telegram_auth.py` 에 중복 1회 처리 / 서로 다른 update 통과 / update_id 없는 폴백 3건 추가.
+  - **남은 검증**: 배포 후 실제로 `/status` 가 1개만 오는지 확인. (안 되면 Render web 로그에서 동일 `update_id` 재수신 여부 → claim 이 호출되는지 확인)
+
 ### 🚧 다음 세션에서 할 일 (우선순위 순)
 
-#### 1. `/status` 중복 출력 버그 — **최우선**
-- 증상: `/status` 1회 입력 시 텔레그램 메시지가 2개 출력됨.
-- 의심 원인: (a) Telegram이 같은 update를 webhook에 2회 전송하거나, (b) `web.py`가 `send_message`를 2회 호출. 로그로 `update_id` 중복 여부 확인이 첫 단계.
-- 확인 방법: Render 대시보드 → web 로그 → `/status` 입력 시 `update_id` 값이 2번 찍히는지.
-- 관련 파일: `src/web.py`(webhook 핸들러), `src/commands.py`(CommandRouter), `src/telegram_bot.py`
-
-#### 2. 부분체결 실제 빈도 관찰
+#### 1. 부분체결 실제 빈도 관찰
 - 장중 트리거 후 텔레그램 보고에 ⚠️(부분체결)이 뜨는지 확인.
 - `after` 스냅샷이 주문 직후 찍혀 체결이 늦게 잡힐 수 있음. 빈번하면 `src/strategy_cycle.py` 8단계 전 1~2초 지연 추가.
 - 관련 파일: `src/strategy_cycle.py` → `run_cycle()` step 8, `_format_report()`, `_leg_filled()`.
 
-#### 3. `/status` 원화+달러 둘 다 표시 (낮음)
+#### 2. `/status` 원화+달러 둘 다 표시 (낮음)
 - psamount 응답에 `exrt`(환율)·`ord_psbl_frcr_amt`(USD 주문가능금액) 있음.
 - 현재: `$100,000.00` → 목표: `$100,000.00 (₩151,000,000)` 형태.
 - 관련 파일: `src/kis_client.py`(`get_cash` → exrt 함께 반환 또는 별도 `get_exrt()`), `src/commands.py`(`/status` 핸들러)
 
-#### 4. DST·월말 거래일 게이트 (낮음)
+#### 3. DST·월말 거래일 게이트 (낮음)
 - 현재 cron 스케줄 `30 15 28-31 * *`(UTC) = KST 00:30, 매월 28~31일. 근사치라 DST·휴장일 미반영.
 - 구현 방향: `strategy_cycle.run_cycle` 진입 시 당일이 미국 주식 거래일인지 체크(pytz + pandas_market_calendars 또는 간단 테이블). 거래일 아니면 "비거래일 — 스킵" 알림 후 종료.
 
-#### 5. `/log` 체결가·잔고변화 표시 (낮음)
+#### 4. `/log` 체결가·잔고변화 표시 (낮음)
 - 현재 `/log`는 side/qty/signal만 보여줌. `state_store.read_trades()`가 이미 `TradeRecord`를 반환.
 - 추가 목표: 체결가(after.holdings × 추정단가), 잔고 변화 (`balance_before`→`balance_after`).
 
@@ -94,9 +100,10 @@
 - **KIS `ORD_DVSN` 필수**: 누락 시 `IGW00019`. 미국주식 정규장 시장가 미지원 → `ORD_DVSN="00"` + 현재가 지정가.
 - **KIS 토큰 1분 제한**: web↔cron 동시 호출 시 403. 1~2분 텀 필수.
 - **fill_monitor 재주문**: 중복 매수 원인이었음 — 현재 비활성화, `get_executions` 실구현 전까지 재활성화 금지.
+- **Telegram webhook 재전송**: 응답이 느리면(cold-start + 다중 KIS 호출) 같은 `update_id` 를 재전송 → 중복 처리. `processed_updates` claim 으로 멱등 처리(이번 세션 수정). 새 webhook 핸들러 추가 시 동일 게이트를 거치게 할 것.
 
 ## 환경/실행 메모
 - 현재 브랜치: `fix/fill-report`(origin/main에 푸시 완료). 다른 머신: `git checkout main && git pull`.
-- 테스트: 레포 루트에서 `python -m pytest` → **87 passed, 1 skipped**.
+- 테스트: 레포 루트에서 `python -m pytest` → **90 passed, 1 skipped**.
 - 비밀값은 전부 Render 환경변수(`.env.example` 참고). 거래종목 QQQM/GLDM 고정, 정수 주문, 기본 모드 `virtual`.
 - 커밋 트레일러: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.

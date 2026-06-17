@@ -20,6 +20,14 @@ class FakeStore:
         self._mode = mode
         self._paused = paused
         self.trades = list(trades or [])  # 최신순 가정 (DB ORDER BY DESC 와 동일)
+        self._seen_updates: set = set()    # webhook 멱등성 — 처리한 update_id 기록
+
+    def claim_update(self, update_id) -> bool:
+        # 처음 보는 update_id 면 True, 재전송이면 False (StateStore.claim_update 의 인메모리 대역).
+        if update_id in self._seen_updates:
+            return False
+        self._seen_updates.add(update_id)
+        return True
 
     def get_trading_mode(self) -> str:
         return self._mode

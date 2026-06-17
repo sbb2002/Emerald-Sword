@@ -63,6 +63,23 @@ class StateStore:
                     (mode,),
                 )
 
+    # ----- webhook 멱등성 (processed_updates) -----
+    def claim_update(self, update_id: int) -> bool:
+        """처음 보는 update_id 면 기록하고 True, 이미 처리한 것이면 False 를 반환한다.
+
+        Telegram 은 webhook 응답이 느리면(특히 Render free-tier cold-start) 같은 update 를
+        재전송한다. 이 claim 으로 재전송분을 가려내 같은 명령이 두 번 실행·두 번 응답되는 것을 막는다.
+        INSERT ... ON CONFLICT DO NOTHING 이라 동시 재시도까지 원자적으로 1회만 통과시킨다.
+        """
+        with get_connection(self._database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO processed_updates (update_id) VALUES (%s)"
+                    " ON CONFLICT (update_id) DO NOTHING;",
+                    (update_id,),
+                )
+                return cur.rowcount == 1
+
     # ----- 마지막 신호 (last_signal) -----
     def get_last_signal(self) -> Optional[str]:
         with get_connection(self._database_url) as conn:
