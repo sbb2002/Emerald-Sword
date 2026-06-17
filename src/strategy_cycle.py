@@ -49,13 +49,33 @@ class CycleDeps:
     now: Callable[[], datetime] = datetime.now
 
 
+def _leg_filled(leg, before, after) -> int:
+    """주문 전·후 실보유 차이로 실제 체결 수량을 추정한다.
+
+    KIS 실보유(get_holdings)가 단일 진실 원천 — 미검증 체결조회(inquire-ccnl) 없이
+    after.holdings - before.holdings 로 체결량을 잡는다. 한 transition 안에서 종목이
+    겹치지 않으므로(매도/매수가 서로 다른 종목) 종목별 차이가 곧 해당 leg 의 체결량이다.
+    """
+    b = int(before.holdings.get(leg.symbol, 0) or 0)
+    a = int(after.holdings.get(leg.symbol, 0) or 0)
+    moved = (a - b) if leg.side == "BUY" else (b - a)
+    return max(0, min(moved, leg.quantity))
+
+
 def _format_report(target: str, transition, before, after, now: datetime) -> str:
-    lines = [f"✅ {now.strftime('%Y-%m')} 신호: {target} 전환 완료"]
-    for leg in transition.legs:
-        if not leg.placed:
-            continue
+    # 접수(rt_cd=0)가 아니라 '실제 체결'을 보고한다 — 부분체결을 정직하게 알린다.
+    rows = [(leg, _leg_filled(leg, before, after)) for leg in transition.placed_orders]
+    fully = all(filled >= leg.quantity for leg, filled in rows)
+    head = "전환 완료" if fully else "전환 — 일부 미체결"
+    lines = [f"{'✅' if fully else '⚠️'} {now.strftime('%Y-%m')} 신호: {target} {head}"]
+    for leg, filled in rows:
         verb = "매도" if leg.side == "SELL" else "매수"
-        lines.append(f"  {verb}: {leg.symbol} {leg.quantity}주 (접수)")
+        if filled >= leg.quantity:
+            lines.append(f"  {verb}: {leg.symbol} {leg.quantity}주 체결 ✅")
+        else:
+            lines.append(f"  {verb}: {leg.symbol} {filled}/{leg.quantity}주 체결, {leg.quantity - filled}주 미체결 ⚠️")
+    if not fully:
+        lines.append("  ⚠️ 미체결분은 장중 자동체결 대기 → 장마감까지 안 되면 만료됩니다.")
     lines.append(f"  잔고: ${before.cash} → ${after.cash}")
     return "\n".join(lines)
 

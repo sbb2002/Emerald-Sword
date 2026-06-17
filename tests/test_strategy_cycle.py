@@ -175,6 +175,45 @@ def test_executes_and_reports_with_mode_tag_and_details():
     assert "잔고: $1000.0 → $50.0" in msg           # 잔고 변화
 
 
+def test_partial_fill_reported_honestly():
+    # 324주 매수가 접수(rt_cd=0)됐어도 실보유가 77주만 늘었으면 '부분체결'로 정직하게 보고.
+    deps, f = _build(
+        FakeStore(last_signal=None),
+        positions=FakePositions([Pos({}, 100000.0), Pos({"QQQM": 77}, 1000.0)]),
+    )
+    f["executor"]._t = TransitionResult(
+        "NASDAQ", "QQQM",
+        [Leg("BUY", "QQQM", 324, placed=True, order=OrderResult("o1", "QQQM", "BUY", 324, True))],
+        complete=True,
+    )
+    result = run_cycle(deps)
+    assert result.status == EXECUTED
+    msg = f["sender"].sent[-1][1]
+    assert "⚠️" in msg                     # 완료(✅)로 위장하지 않음
+    assert "77/324주 체결" in msg
+    assert "247주 미체결" in msg
+    assert "미체결분" in msg                # 장중 대기/만료 안내
+
+
+def test_full_fill_marked_complete():
+    # 주문 수량만큼 실보유가 늘면 완전체결(✅) 로 보고.
+    deps, f = _build(
+        FakeStore(last_signal=None),
+        positions=FakePositions([Pos({}, 100000.0), Pos({"QQQM": 324}, 1000.0)]),
+    )
+    f["executor"]._t = TransitionResult(
+        "NASDAQ", "QQQM",
+        [Leg("BUY", "QQQM", 324, placed=True, order=OrderResult("o1", "QQQM", "BUY", 324, True))],
+        complete=True,
+    )
+    result = run_cycle(deps)
+    assert result.status == EXECUTED
+    msg = f["sender"].sent[-1][1]
+    assert "324주 체결 ✅" in msg
+    assert "미체결" not in msg
+    assert "전환 완료" in msg
+
+
 def test_already_holding_target_no_trade():
     # 실제로 목표(QQQM)를 이미 보유하면 무거래 — 직전 신호 값과 무관.
     deps, f = _build(FakeStore(), positions=FakePositions([Pos({"QQQM": 3}, 50.0)]))
