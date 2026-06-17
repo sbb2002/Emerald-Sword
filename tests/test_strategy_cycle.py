@@ -1,10 +1,13 @@
 """전략 사이클 오케스트레이터 — mock 환경 통합 테스트 (이슈 #8)."""
+from datetime import datetime
+
 from src.kis_interface import OrderResult
 from src.mode_manager import ModeManager
 from src.order_executor import Leg, TransitionResult
 from src.strategy_cycle import (
     EXECUTED,
     INCOMPLETE,
+    NON_TRADING_DAY,
     OUTLIER_PENDING,
     PAUSED,
     UNCHANGED,
@@ -15,6 +18,10 @@ from src.telegram_bot import TelegramBot
 
 NASDAQ_RISING = list(range(100, 113))      # 13개, 상승
 GOLD_FALLING = list(range(200, 187, -1))   # 13개, 하락 → 신호 NASDAQ
+
+# 거래일 게이트 통과용 기본 시각 — 2026-06-17(수), 미국 증시 거래일.
+# 비거래일이면 step 2 토큰 발급 전에 막히므로 기존 통합 테스트가 깨진다 → 거래일로 고정.
+TRADING_DAY = datetime(2026, 6, 17, 0, 30)
 
 
 class FakeStore:
@@ -128,7 +135,7 @@ def _transition():
     return TransitionResult("NASDAQ", "QQQM", [sell, buy], True)
 
 
-def _build(store, *, market=None, fill_complete=True, positions=None):
+def _build(store, *, market=None, fill_complete=True, positions=None, now_dt=TRADING_DAY):
     sender = FakeSender()
     bot = TelegramBot(42, ModeManager(store), sender)
     fakes = {
@@ -147,6 +154,7 @@ def _build(store, *, market=None, fill_complete=True, positions=None):
         order_executor=fakes["executor"],
         fill_handler=FakeFill(fill_complete),
         fallback=fakes["fallback"],
+        now=lambda: now_dt,
     )
     return deps, fakes
 
@@ -158,6 +166,25 @@ def test_paused_skips_and_notifies():
     assert f["executor"].calls == 0
     assert f["token"].calls == 0
     assert "일시정지" in f["sender"].sent[-1][1]
+
+
+def test_weekend_skips_before_token():
+    # 토요일(2026-06-20)에 트리거되면 토큰 발급 전에 비거래일로 건너뛴다.
+    deps, f = _build(FakeStore(), now_dt=datetime(2026, 6, 20, 0, 30))
+    result = run_cycle(deps)
+    assert result.status == NON_TRADING_DAY
+    assert f["token"].calls == 0        # 토큰 발급 전에 막힘
+    assert f["executor"].calls == 0
+    assert "비거래일" in f["sender"].sent[-1][1]
+
+
+def test_us_market_holiday_skips_cycle():
+    # 미국 증시 휴장일(2026-06-19 Juneteenth, 금요일)도 — 평일이지만 — 건너뛴다.
+    deps, f = _build(FakeStore(), now_dt=datetime(2026, 6, 19, 0, 30))
+    result = run_cycle(deps)
+    assert result.status == NON_TRADING_DAY
+    assert f["token"].calls == 0
+    assert f["executor"].calls == 0
 
 
 def test_executes_and_reports_with_mode_tag_and_details():

@@ -18,8 +18,10 @@ from typing import Callable, Optional
 
 from .momentum import decide_signal
 from .order_executor import ALL_TICKERS, TICKER
+from .trading_calendar import is_trading_day
 
 PAUSED = "PAUSED"
+NON_TRADING_DAY = "NON_TRADING_DAY"
 OUTLIER_PENDING = "OUTLIER_PENDING"
 UNCHANGED = "UNCHANGED"
 EXECUTED = "EXECUTED"
@@ -94,6 +96,15 @@ def run_cycle(deps: CycleDeps) -> CycleResult:
     if deps.store.is_paused():
         deps.notify("⏸️ 자동거래 일시정지 중 — 이번 월말 사이클을 건너뜁니다.")
         return CycleResult(PAUSED)
+
+    # 1.5) 거래일 게이트 — 비거래일(주말·미국 증시 휴장)이면 토큰 발급 전에 건너뛴다.
+    #      Cron 트리거(UTC 30 15 28-31)는 KST 기준 날짜로 판단한다(deps.now 가 KST).
+    today = deps.now().date()
+    if not is_trading_day(today):
+        deps.notify(
+            f"📅 {today.isoformat()} — 미국 증시 비거래일(주말·휴장)이라 이번 트리거를 건너뜁니다."
+        )
+        return CycleResult(NON_TRADING_DAY)
 
     # 2) 토큰 발급(사이클 1회 — 이후 재사용)
     deps.token_manager.get_token()
