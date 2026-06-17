@@ -98,7 +98,9 @@ def run_cycle(deps: CycleDeps) -> CycleResult:
         return CycleResult(PAUSED)
 
     # 1.5) 거래일 게이트 — 비거래일(주말·미국 증시 휴장)이면 토큰 발급 전에 건너뛴다.
-    #      Cron 트리거(UTC 30 15 28-31)는 KST 기준 날짜로 판단한다(deps.now 가 KST).
+    #      deps.now()=datetime.now()=서버 UTC(cron.py 가 now 를 주입하지 않음). cron 트리거
+    #      (UTC 30 15 28-31)는 UTC 15:30 = 미국 동부 오전(장중)이라 UTC 날짜가 미국 증시(ET)
+    #      거래일과 일치한다. ⚠️ KST/tz-aware 로 바꾸면 하루 어긋나 정상 거래일을 스킵하니 UTC 유지.
     today = deps.now().date()
     if not is_trading_day(today):
         deps.notify(

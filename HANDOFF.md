@@ -9,7 +9,7 @@
 
 ## ⚡ 현재 상태 (2026-06-17 갱신)
 
-> Phase A/B/C 구현·테스트 완료(**90 passed, 1 skipped**). Render 배포 + KIS 모의계좌로 실제 매수까지 성공. 현재는 라이브 안정화 단계.
+> Phase A/B/C 구현·테스트 완료(**105 passed, 1 skipped**). Render 배포 + KIS 모의계좌로 실제 매수까지 성공. 현재는 라이브 안정화 + 후속 개선 단계.
 
 ### 배포 상태
 - **`main` = 배포 브랜치**(autoDeploy). 다른 머신: `git checkout main && git pull` 후 main 기준 작업.
@@ -38,25 +38,23 @@
   - 테스트: `test_telegram_auth.py` 에 중복 1회 처리 / 서로 다른 update 통과 / update_id 없는 폴백 3건 추가.
   - **남은 검증**: 배포 후 실제로 `/status` 가 1개만 오는지 확인. (안 되면 Render web 로그에서 동일 `update_id` 재수신 여부 → claim 이 호출되는지 확인)
 
-### 🚧 다음 세션에서 할 일 (우선순위 순)
+- **후속 개선 3건** — 병렬 worktree 에이전트로 구현(`708002c`·`0ac80fe`·`9799af8`), 통합 후 **105 passed, 1 skipped**.
+  - `/status` 원화 병기: `kis_client.get_exrt()`(inquire-psamount `exrt`) + `StatusView.exrt` → `$100,000.00 (₩151,000,000)`. 환율 0/없으면 USD만(폴백). `get_cash()` 반환 타입 불변.
+  - `/log` 체결가·잔고변화: `TradeRecord`에 `fill_price`·`balance_before`·`balance_after` 추가 + `read_trades` SELECT 확장. 값 없으면 생략(**표시 계층만** — `record_trade` 의 fill_price 저장은 미구현이라 현재 체결가는 항상 NULL → 표시 안 됨. 잔고변화는 이미 저장되어 표시됨).
+  - 거래일 게이트: 신규 `src/trading_calendar.py`(외부 의존성 0, `is_trading_day`, 미 증시 휴장일 2026~2030). `run_cycle` step 1.5 에서 비거래일이면 토큰 발급 전 스킵(`NON_TRADING_DAY`). ⚠️ `deps.now()`=서버 UTC 기준 판정(cron UTC 15:30 = 미 동부 장중이라 UTC date == ET 거래일). KST/tz-aware 로 바꾸면 하루 어긋나니 금지.
 
-#### 1. 부분체결 실제 빈도 관찰
+### 🚧 다음 세션에서 할 일
+
+#### 1. 부분체결 실제 빈도 관찰 — 배포 후 라이브 관찰 (코딩 아님)
 - 장중 트리거 후 텔레그램 보고에 ⚠️(부분체결)이 뜨는지 확인.
-- `after` 스냅샷이 주문 직후 찍혀 체결이 늦게 잡힐 수 있음. 빈번하면 `src/strategy_cycle.py` 8단계 전 1~2초 지연 추가.
+- `after` 스냅샷이 주문 직후 찍혀 체결이 늦게 잡힐 수 있음. 빈번하면 `src/strategy_cycle.py` step 8 전 1~2초 지연 추가.
 - 관련 파일: `src/strategy_cycle.py` → `run_cycle()` step 8, `_format_report()`, `_leg_filled()`.
 
-#### 2. `/status` 원화+달러 둘 다 표시 (낮음)
-- psamount 응답에 `exrt`(환율)·`ord_psbl_frcr_amt`(USD 주문가능금액) 있음.
-- 현재: `$100,000.00` → 목표: `$100,000.00 (₩151,000,000)` 형태.
-- 관련 파일: `src/kis_client.py`(`get_cash` → exrt 함께 반환 또는 별도 `get_exrt()`), `src/commands.py`(`/status` 핸들러)
+#### 2. (선택) `/log` 체결가 실제 저장
+- 현재 체결가(`fill_price`)는 DB에 저장되지 않아 `/log`에서 항상 생략됨(표시 로직은 이미 있음).
+- 저장하려면 `strategy_cycle.run_cycle` step 8 의 `record_trade(...)` 에 `fill_price` 전달 + `state_store.record_trade`/INSERT 에 컬럼 추가 필요(체결가는 `_format_report` 가 추정하는 값과 동일 출처).
 
-#### 3. DST·월말 거래일 게이트 (낮음)
-- 현재 cron 스케줄 `30 15 28-31 * *`(UTC) = KST 00:30, 매월 28~31일. 근사치라 DST·휴장일 미반영.
-- 구현 방향: `strategy_cycle.run_cycle` 진입 시 당일이 미국 주식 거래일인지 체크(pytz + pandas_market_calendars 또는 간단 테이블). 거래일 아니면 "비거래일 — 스킵" 알림 후 종료.
-
-#### 4. `/log` 체결가·잔고변화 표시 (낮음)
-- 현재 `/log`는 side/qty/signal만 보여줌. `state_store.read_trades()`가 이미 `TradeRecord`를 반환.
-- 추가 목표: 체결가(after.holdings × 추정단가), 잔고 변화 (`balance_before`→`balance_after`).
+> 직전 #2(/status 원화)·#3(거래일 게이트)·#4(/log 표시 계층)는 이번 세션에 완료 → 위 "이번 세션 수정" 참고.
 
 ### 주의 (현 상태)
 - **토큰 403 Forbidden**: web 명령(/status·/emergency-stop) 직후 1분 내 cron 트리거 겹치면 발생. 1~2분 텀 유지.
@@ -104,6 +102,6 @@
 
 ## 환경/실행 메모
 - 현재 브랜치: `fix/fill-report`(origin/main에 푸시 완료). 다른 머신: `git checkout main && git pull`.
-- 테스트: 레포 루트에서 `python -m pytest` → **90 passed, 1 skipped**.
+- 테스트: 레포 루트에서 `python -m pytest` → **105 passed, 1 skipped**.
 - 비밀값은 전부 Render 환경변수(`.env.example` 참고). 거래종목 QQQM/GLDM 고정, 정수 주문, 기본 모드 `virtual`.
 - 커밋 트레일러: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.
