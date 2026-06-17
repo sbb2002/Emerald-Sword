@@ -68,10 +68,15 @@ async def lifespan(app: FastAPI):
                 signal = decide_signal(nasdaq.month_end_closes, gold.month_end_closes).target
             except Exception:
                 signal = None
+            exrt = None
+            try:  # 환율도 best-effort — 실패하면 현금은 USD만 표시
+                exrt = kis.get_exrt() or None
+            except Exception:
+                exrt = None
             return StatusView(
                 holdings=snap.holdings, cash=snap.cash,
                 insufficient_for_next=insufficient, server_ok=True,
-                prices=prices, signal=signal,
+                prices=prices, signal=signal, exrt=exrt,
             )
         except Exception:
             # KIS 도달 실패 등 — 서버 상태를 '오류'로 표시(명령 자체는 200 으로 응답).

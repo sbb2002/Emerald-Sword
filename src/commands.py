@@ -43,6 +43,7 @@ class StatusView:
     server_ok: bool
     prices: Optional[dict] = None        # {symbol: 현재가} — 평가금액 계산용(없으면 금액 생략)
     signal: Optional[str] = None         # 현재 모멘텀 신호(NASDAQ|GOLD|CASH), best-effort
+    exrt: Optional[float] = None         # 원·달러 환율(KRW/USD) — 현금 원화 병기용. 없거나 0이면 USD만
 
 
 def _default_code() -> str:
@@ -65,6 +66,23 @@ def _fmt_money(value: float) -> str:
         return f"${value:,.2f}"
     except (TypeError, ValueError):
         return f"${value}"
+
+
+def _fmt_krw(value: float) -> str:
+    """원화 표시 — 정수 + 천단위 콤마(예: ₩151,000,000). 소수점 없음."""
+    try:
+        return f"₩{value:,.0f}"
+    except (TypeError, ValueError):
+        return f"₩{value}"
+
+
+def _fmt_cash(cash: float, exrt: Optional[float]) -> str:
+    """현금 USD 표시. 환율이 있으면 원화 병기(예: $100,000.00 (₩151,000,000)).
+    환율이 없거나 0이면 USD만 표시(폴백)."""
+    usd = _fmt_money(cash)
+    if exrt and exrt > 0:
+        return f"{usd} ({_fmt_krw(cash * exrt)})"
+    return usd
 
 
 def _is_yes(text: str) -> bool:
@@ -157,7 +175,7 @@ class CommandRouter:
                     lines.append(f"  보유: {sym} {qty}주")
         else:
             lines.append("  보유: 없음 (현금)")
-        lines.append(f"  현금: {_fmt_money(sv.cash)}")
+        lines.append(f"  현금: {_fmt_cash(sv.cash, sv.exrt)}")
         lines.append(f"  총자산: ~{_fmt_money(holdings_value + sv.cash)}")
         if sv.signal:
             label = {

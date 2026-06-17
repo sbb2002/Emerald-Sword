@@ -209,6 +209,35 @@ class HttpKisClient:
         logger.info("KIS 주문가능현금(USD): $%.2f", cash)
         return cash
 
+    def get_exrt(self) -> float:
+        """원·달러 환율(KRW/USD). inquire-psamount 응답의 exrt(매수가능금액 산정에 쓰인 환율).
+        /status 의 현금 원화 병기에 쓴다(예: $100,000 → ₩151,000,000). get_cash 와 같은
+        endpoint 라 구조를 그대로 따른다. 실패 시 0.0(상위가 USD 만 표시하도록)."""
+        try:
+            price = self.get_price("QQQM") or 1.0
+            resp = self._send(
+                "GET",
+                f"{self._base}/uapi/overseas-stock/v1/trading/inquire-psamount",
+                headers=self._headers(_PSAMT_TR[self._mode]),
+                params={
+                    "CANO": self._cano,
+                    "ACNT_PRDT_CD": self._acnt_prdt_cd,
+                    "OVRS_EXCG_CD": "NASD",
+                    "OVRS_ORD_UNPR": str(price),
+                    "ITEM_CD": "QQQM",
+                },
+            )
+            resp.raise_for_status()
+            out = resp.json().get("output", {}) or {}
+            if isinstance(out, list):
+                out = out[0] if out else {}
+            exrt = float(out.get("exrt") or 0)
+        except Exception:
+            logger.exception("KIS 환율(exrt) 조회 실패 — 0 으로 처리")
+            exrt = 0.0
+        logger.info("KIS 환율(exrt, KRW/USD): %.2f", exrt)
+        return exrt
+
     def get_buyable_qty(self, symbol: str, price: float) -> int:
         """KIS 가 계산한 최대 주문가능 수량(매수가능금액 조회의 max_ord_psbl_qty).
         floor(cash/price) 는 수수료·환율 버퍼를 무시해 KIS 한도를 초과(→주문 500)하므로

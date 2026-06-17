@@ -1,5 +1,5 @@
 """CommandRouter — 조회/통제/모드/긴급정지 명령 검증."""
-from src.commands import CommandDeps, CommandRouter, HELP_TEXT
+from src.commands import CommandDeps, CommandRouter, HELP_TEXT, StatusView
 from src.mode_manager import ModeManager
 from src.state_store import TradeRecord
 from src.telegram_bot import TelegramBot
@@ -75,6 +75,33 @@ def test_status_shows_holdings_value_total_and_emoji(router):
     assert "총자산" in out
     assert "✅" in out               # 서버 상태 이모지
     assert "NASDAQ (QQQM)" in out    # 현재 신호
+
+
+def test_status_shows_cash_in_krw_when_exrt_available(router):
+    out = router.handle("/status", 42)
+    assert "$125.50" in out          # USD 현금은 그대로 유지
+    assert "₩173,190" in out         # 원화 병기 (125.50 × 1380, 정수 + 천단위 콤마)
+
+
+def _status_router(store, **status_kwargs):
+    """주어진 StatusView 필드로 /status 라우터를 만든다(환율 병기/폴백 검증용)."""
+    base = dict(holdings={}, cash=1000.0, insufficient_for_next=False, server_ok=True)
+    base.update(status_kwargs)
+    sv = StatusView(**base)
+    return CommandRouter(CommandDeps(store=store, status_provider=lambda: sv))
+
+
+def test_status_falls_back_to_usd_only_when_exrt_missing(store):
+    out = _status_router(store, exrt=None).handle("/status", 42)
+    assert "$1,000.00" in out
+    assert "₩" not in out            # 환율 없으면 USD만 (폴백)
+
+
+def test_status_falls_back_to_usd_only_when_exrt_zero(store):
+    # get_exrt 실패 시 0.0 을 돌려주므로 0 도 폴백 처리돼야 한다.
+    out = _status_router(store, exrt=0.0).handle("/status", 42)
+    assert "$1,000.00" in out
+    assert "₩" not in out
 
 
 def test_signal_previews_current_target(router):

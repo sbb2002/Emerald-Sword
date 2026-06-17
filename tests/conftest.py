@@ -69,7 +69,7 @@ class FakeSender:
 def fake_status() -> StatusView:
     return StatusView(
         holdings={"QQQM": 3}, cash=125.50, insufficient_for_next=False, server_ok=True,
-        prices={"QQQM": 485.0}, signal="NASDAQ",
+        prices={"QQQM": 485.0}, signal="NASDAQ", exrt=1380.0,
     )
 
 
