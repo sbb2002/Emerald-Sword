@@ -53,6 +53,7 @@ class FakeStore:
             self.trades.insert(0, TradeRecord(
                 executed_at="now", mode=mode, signal=signal,
                 side=leg.side, ticker=leg.symbol, quantity=leg.quantity, reason=reason,
+                balance_before=balance_before, balance_after=balance_after,
             ))
 
 

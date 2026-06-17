@@ -25,6 +25,14 @@ class TradeRecord:
     ticker: Optional[str]       # QQQM | GLDM
     quantity: Optional[int]
     reason: Optional[str]       # monthly_signal | emergency_stop | ...
+    fill_price: Optional[float] = None       # 체결가(없으면 None — 표시 시 생략)
+    balance_before: Optional[float] = None   # 거래 전 현금 잔고
+    balance_after: Optional[float] = None     # 거래 후 현금 잔고
+
+
+def _to_float(value) -> Optional[float]:
+    """psycopg NUMERIC(Decimal) → float, NULL → None (표시 계층용)."""
+    return float(value) if value is not None else None
 
 
 class StateStore:
@@ -123,7 +131,8 @@ class StateStore:
     def read_trades(self, limit: Optional[int] = None) -> list:
         """거래 로그를 최신순으로 읽는다. limit=None 이면 전체(/log [N])."""
         sql = (
-            "SELECT executed_at, mode, signal, side, ticker, quantity, reason"
+            "SELECT executed_at, mode, signal, side, ticker, quantity, reason,"
+            " fill_price, balance_before, balance_after"
             " FROM trade_log ORDER BY executed_at DESC, id DESC"
         )
         params: tuple = ()
@@ -138,5 +147,12 @@ class StateStore:
         for r in rows:
             ts = r[0]
             ts = ts.isoformat(sep=" ", timespec="minutes") if hasattr(ts, "isoformat") else str(ts)
-            out.append(TradeRecord(ts, r[1], r[2], r[3], r[4], int(r[5]) if r[5] is not None else None, r[6]))
+            out.append(TradeRecord(
+                ts, r[1], r[2], r[3], r[4],
+                int(r[5]) if r[5] is not None else None,
+                r[6],
+                fill_price=_to_float(r[7]),
+                balance_before=_to_float(r[8]),
+                balance_after=_to_float(r[9]),
+            ))
         return out

@@ -146,6 +146,27 @@ def test_emergency_stop_trade_is_marked_in_log(router, store):
     assert "비상청산" in out
 
 
+def test_log_shows_fill_price_and_balance_change(router, store):
+    store.trades = [
+        TradeRecord("2026-06-30 00:10", "real", "GOLD", "BUY", "GLDM", 2, "monthly_signal",
+                    fill_price=61.25, balance_before=1000.0, balance_after=877.5),
+    ]
+    out = router.handle("/log", 42)
+    assert "@ $61.25" in out                # 체결가
+    assert "$1,000.00→$877.50" in out       # 잔고 변화(전→후)
+
+
+def test_log_omits_fill_price_and_balance_when_none(router, store):
+    store.trades = [
+        TradeRecord("2026-05-31 00:10", "real", "NASDAQ", "BUY", "QQQM", 3, "monthly_signal"),
+    ]
+    out = router.handle("/log", 42)
+    assert "@" not in out          # 체결가 None → 생략
+    assert "잔고" not in out        # 잔고 None → 생략
+    assert "QQQM 3주" in out        # 기존 줄 포맷은 유지
+    assert "[NASDAQ]" in out
+
+
 # ----- 통제 명령 (#12) -----
 
 def test_pause_asks_confirmation_then_pauses(router, store):

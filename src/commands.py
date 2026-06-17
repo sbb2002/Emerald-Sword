@@ -219,7 +219,18 @@ class CommandRouter:
         for t in trades:
             verb = "매도" if t.side == "SELL" else "매수"
             mark = " ⚠️비상청산" if t.reason == "emergency_stop" else ""
-            lines.append(f"  {t.executed_at} · {verb} {t.ticker} {t.quantity}주 [{t.signal}]{mark}")
+            fill_price = getattr(t, "fill_price", None)
+            price_str = f" @ {_fmt_money(fill_price)}" if fill_price is not None else ""
+            bb = getattr(t, "balance_before", None)
+            ba = getattr(t, "balance_after", None)
+            bal_str = (
+                f" · 잔고 {_fmt_money(bb)}→{_fmt_money(ba)}"
+                if bb is not None and ba is not None else ""
+            )
+            lines.append(
+                f"  {t.executed_at} · {verb} {t.ticker} {t.quantity}주{price_str}"
+                f" [{t.signal}]{mark}{bal_str}"
+            )
         return "\n".join(lines)
 
     # ----- 통제 (#12) -----
