@@ -6,8 +6,16 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, Sequence
+
+
+def _naive_utc(dt: datetime) -> datetime:
+    """tz-aware datetime 은 UTC 로 맞춰 tzinfo 를 제거한다(naive 면 그대로).
+    DB(TIMESTAMPTZ)는 aware, datetime.now()/테스트는 naive 라 그대로 빼면 TypeError 가 난다."""
+    if dt.tzinfo is not None:
+        return dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 @dataclass(frozen=True)
@@ -43,7 +51,7 @@ def compute_cagr(twr: Optional[float], start: datetime, now: datetime) -> Option
     """TWR 을 연율화한 복리수익률. 운용 365일 미만이면 None(짧은 기간 연율화 왜곡 방지)."""
     if twr is None:
         return None
-    days = (now - start).days
+    days = (_naive_utc(now) - _naive_utc(start)).days
     if days < 365:
         return None
     years = days / 365.25
@@ -55,4 +63,4 @@ def running_days(flows: Sequence[CashFlow], now: datetime) -> Optional[int]:
     if not flows:
         return None
     start = min(f.occurred_at for f in flows)
-    return max(0, (now - start).days)
+    return max(0, (_naive_utc(now) - _naive_utc(start)).days)

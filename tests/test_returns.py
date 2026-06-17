@@ -1,5 +1,5 @@
 """returns — TWR(시간가중) + CAGR 순수 함수 검증."""
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.returns import CashFlow, compute_cagr, compute_twr, running_days
 
@@ -55,3 +55,14 @@ def test_cagr_none_when_twr_none():
 def test_running_days():
     assert running_days([_cf(1, 100000.0, 0.0)], datetime(2026, 4, 1)) == 90
     assert running_days([], datetime(2026, 4, 1)) is None
+
+
+def test_tz_aware_occurred_at_does_not_crash():
+    # DB(TIMESTAMPTZ)는 tz-aware occurred_at 을 준다 — naive now 와 섞여도 TypeError 없이 동작해야 한다.
+    # (FakeStore 는 naive 라 이 케이스를 못 잡았고, 라이브에서 status 가 twr 을 통째로 None 으로 덮었다.)
+    aware = CashFlow(
+        occurred_at=datetime(2026, 1, 1, tzinfo=timezone.utc), signed_amount=100000.0, nav_before=0.0,
+    )
+    assert running_days([aware], datetime(2026, 4, 1)) == 90                       # naive now
+    assert running_days([aware], datetime(2026, 4, 1, tzinfo=timezone.utc)) == 90  # aware now
+    assert compute_cagr(-0.0162, datetime(2026, 1, 1, tzinfo=timezone.utc), datetime(2026, 4, 1)) is None

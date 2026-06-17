@@ -10,7 +10,7 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Optional
 
 from fastapi import FastAPI, Request, Response
@@ -87,7 +87,7 @@ async def lifespan(app: FastAPI):
             try:  # 수익률도 best-effort — cash_flows 없거나 실패하면 생략
                 flows = store.read_cash_flows(store.get_trading_mode())
                 twr = compute_twr(flows, nav)
-                now = datetime.now()
+                now = datetime.now(timezone.utc)
                 rdays = running_days(flows, now)
                 if flows:
                     cagr = compute_cagr(twr, min(f.occurred_at for f in flows), now)
