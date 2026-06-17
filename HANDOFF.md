@@ -91,8 +91,6 @@
 - **KIS 라이브 디버깅 방식**: 로그 → 트리거 → 원인 확정 → 수정 → push 사이클.
 
 ## What Didn't Work / 주의
-- **PowerShell + gh**: `--body`에 한글/따옴표 → `--body-file` 사용.
-- **PowerShell `2>&1` on native exe**: stderr 에러 래핑 → 리다이렉트 쓰지 말 것.
 - **KIS `ORD_DVSN` 필수**: 누락 시 `IGW00019`. 미국주식 정규장 시장가 미지원 → `ORD_DVSN="00"` + 현재가 지정가.
 - **KIS 토큰 1분 제한**: web↔cron 동시 호출 시 403. 1~2분 텀 필수.
 - **fill_monitor 재주문**: 중복 매수 원인이었음 — 현재 비활성화, `get_executions` 실구현 전까지 재활성화 금지.
