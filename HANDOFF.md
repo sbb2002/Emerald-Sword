@@ -47,7 +47,7 @@
   - 왜 TWR: 자금을 주기적으로 추가하는 운용이라 단순누적/CAGR은 입금 타이밍에 왜곡됨 → 시간가중수익률(TWR)로 전략 성과 측정(입출금 0인 현재는 단순누적과 동일).
   - `src/returns.py`(순수 함수): `compute_twr`(입출금 시점 `nav_before` 로 구간 분할) · `compute_cagr`(운용 365일 미만 None) · `running_days`.
   - `src/migrations/003_cash_flows.sql`: `cash_flows`(mode별) + 모의 시드 $100k(nav_before=0). `StateStore.record_cash_flow`/`read_cash_flows`.
-  - `/deposit N`·`/withdraw N`: 현재 NAV 조회 → 확인(y/n) → 기록(실제 송금 아님, 수익률 기준). `web.py` 가 `nav_provider` 주입.
+  - `/deposit N`·`/withdraw N` — **`/help` 에 노출하지 않는 '숨은 명령'**(평상시 쓸 일 없어 도움말에서 제외, 동작은 정상). 현재 NAV 조회 → 확인(y/n) → 기록(실제 송금이 아니라 수익률 기준점). **실전 전환 후 자금 추가 시에만** 사용. `web.py` 가 `nav_provider` 주입. ※ 명령 자체는 `commands.py` `_command` 디스패치에 살아 있음.
   - `/status`: 보유 줄에 평가손익률 병기 + `수익률(TWR)` + `CAGR`(1년 미만은 '운용 N개월' 안내).
   - **남은 검증**: ① `kis_client.get_position_pnl`(evlu_pfls_rt 필드명/부호) 라이브 확인 — 실패 시 보유 평가손익률만 생략(나머지 정상). ② 마이그레이션 003 자동 적용(시드 1행 삽입). ③ 시드 `occurred_at`=배포 시점이라 CAGR 운용연수가 근사 — 정확한 시드일은 DB 에서 수정 가능(어차피 1년 전까진 CAGR 숨김).
 

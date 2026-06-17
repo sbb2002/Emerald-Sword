@@ -29,10 +29,9 @@ HELP_TEXT = (
     "/virtual — 모의투자 모드 전환\n"
     "/real — 실전 모드 전환 (확인코드 필요)\n"
     "/emergency-stop — 전량 청산 후 중지\n"
-    "/deposit N — 입금 N(USD) 기록 (수익률 기준)\n"
-    "/withdraw N — 출금 N(USD) 기록\n"
     "/help — 이 도움말"
 )
+# /deposit·/withdraw 는 의도적으로 HELP 에 넣지 않은 '숨은 명령'이다(아래 _command 참고).
 
 
 @dataclass
@@ -181,6 +180,8 @@ class CommandRouter:
             return self._real(chat_id)
         if cmd in ("/emergency-stop", "/emergency_stop"):
             return self._emergency_stop(chat_id)
+        # /deposit·/withdraw 는 HELP 미노출 '숨은 명령' — 입출금 기록(수익률 TWR 기준점).
+        # 실전 전환 후 자금을 추가할 때만 쓰므로 평상시 도움말에서 제외(동작은 정상).
         if cmd == "/deposit":
             return self._cashflow("deposit", text, chat_id)
         if cmd == "/withdraw":
