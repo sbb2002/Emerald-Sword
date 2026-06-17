@@ -9,7 +9,7 @@
 
 ## ⚡ 현재 상태 (2026-06-17 갱신)
 
-> Phase A/B/C 구현·테스트 완료(**105 passed, 1 skipped**). Render 배포 + KIS 모의계좌로 실제 매수까지 성공. 현재는 라이브 안정화 + 후속 개선 단계.
+> Phase A/B/C 구현·테스트 완료(**122 passed, 1 skipped**). Render 배포 + KIS 모의계좌로 실제 매수까지 성공. 현재는 라이브 안정화 + 후속 개선 단계.
 
 ### 배포 상태
 - **`main` = 배포 브랜치**(autoDeploy). 다른 머신: `git checkout main && git pull` 후 main 기준 작업.
@@ -42,6 +42,14 @@
   - `/status` 원화 병기: `kis_client.get_exrt()`(inquire-psamount `exrt`) + `StatusView.exrt` → `$100,000.00 (₩151,000,000)`. 환율 0/없으면 USD만(폴백). `get_cash()` 반환 타입 불변.
   - `/log` 체결가·잔고변화: `TradeRecord`에 `fill_price`·`balance_before`·`balance_after` 추가 + `read_trades` SELECT 확장. 값 없으면 생략(**표시 계층만** — `record_trade` 의 fill_price 저장은 미구현이라 현재 체결가는 항상 NULL → 표시 안 됨. 잔고변화는 이미 저장되어 표시됨).
   - 거래일 게이트: 신규 `src/trading_calendar.py`(외부 의존성 0, `is_trading_day`, 미 증시 휴장일 2026~2030). `run_cycle` step 1.5 에서 비거래일이면 토큰 발급 전 스킵(`NON_TRADING_DAY`). ⚠️ `deps.now()`=서버 UTC 기준 판정(cron UTC 15:30 = 미 동부 장중이라 UTC date == ET 거래일). KST/tz-aware 로 바꾸면 하루 어긋나니 금지.
+
+- **수익률 표시** — TWR/CAGR/보유 평가손익률 + 입출금 기록. 통합 후 **122 passed, 1 skipped**.
+  - 왜 TWR: 자금을 주기적으로 추가하는 운용이라 단순누적/CAGR은 입금 타이밍에 왜곡됨 → 시간가중수익률(TWR)로 전략 성과 측정(입출금 0인 현재는 단순누적과 동일).
+  - `src/returns.py`(순수 함수): `compute_twr`(입출금 시점 `nav_before` 로 구간 분할) · `compute_cagr`(운용 365일 미만 None) · `running_days`.
+  - `src/migrations/003_cash_flows.sql`: `cash_flows`(mode별) + 모의 시드 $100k(nav_before=0). `StateStore.record_cash_flow`/`read_cash_flows`.
+  - `/deposit N`·`/withdraw N`: 현재 NAV 조회 → 확인(y/n) → 기록(실제 송금 아님, 수익률 기준). `web.py` 가 `nav_provider` 주입.
+  - `/status`: 보유 줄에 평가손익률 병기 + `수익률(TWR)` + `CAGR`(1년 미만은 '운용 N개월' 안내).
+  - **남은 검증**: ① `kis_client.get_position_pnl`(evlu_pfls_rt 필드명/부호) 라이브 확인 — 실패 시 보유 평가손익률만 생략(나머지 정상). ② 마이그레이션 003 자동 적용(시드 1행 삽입). ③ 시드 `occurred_at`=배포 시점이라 CAGR 운용연수가 근사 — 정확한 시드일은 DB 에서 수정 가능(어차피 1년 전까진 CAGR 숨김).
 
 ### 🚧 다음 세션에서 할 일
 
@@ -102,6 +110,6 @@
 
 ## 환경/실행 메모
 - 현재 브랜치: `fix/fill-report`(origin/main에 푸시 완료). 다른 머신: `git checkout main && git pull`.
-- 테스트: 레포 루트에서 `python -m pytest` → **105 passed, 1 skipped**.
+- 테스트: 레포 루트에서 `python -m pytest` → **122 passed, 1 skipped**.
 - 비밀값은 전부 Render 환경변수(`.env.example` 참고). 거래종목 QQQM/GLDM 고정, 정수 주문, 기본 모드 `virtual`.
 - 커밋 트레일러: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.

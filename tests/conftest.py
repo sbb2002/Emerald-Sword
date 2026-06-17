@@ -6,9 +6,12 @@ from __future__ import annotations
 
 import pytest
 
+from datetime import datetime
+
 from src.commands import CommandDeps, CommandRouter, StatusView
 from src.mode_manager import ModeManager
 from src.momentum import SignalResult
+from src.returns import CashFlow
 from src.state_store import TradeRecord
 from src.telegram_bot import TelegramBot
 
@@ -21,6 +24,23 @@ class FakeStore:
         self._paused = paused
         self.trades = list(trades or [])  # 최신순 가정 (DB ORDER BY DESC 와 동일)
         self._seen_updates: set = set()    # webhook 멱등성 — 처리한 update_id 기록
+        self.cash_flows: list = []         # 입출금 기록 (record_cash_flow 가 적재)
+
+    def record_cash_flow(self, *, mode, amount, direction, nav_before, note="") -> None:
+        self.cash_flows.append(
+            {"mode": mode, "amount": amount, "direction": direction,
+             "nav_before": nav_before, "note": note}
+        )
+
+    def read_cash_flows(self, mode) -> list:
+        out = []
+        for i, cf in enumerate(c for c in self.cash_flows if c["mode"] == mode):
+            signed = cf["amount"] if cf["direction"] == "deposit" else -cf["amount"]
+            out.append(CashFlow(
+                occurred_at=datetime(2026, 1, 1, 0, i),
+                signed_amount=signed, nav_before=cf["nav_before"],
+            ))
+        return out
 
     def claim_update(self, update_id) -> bool:
         # 처음 보는 update_id 면 True, 재전송이면 False (StateStore.claim_update 의 인메모리 대역).
@@ -90,7 +110,8 @@ def sender() -> FakeSender:
 
 @pytest.fixture
 def deps(store: FakeStore) -> CommandDeps:
-    return CommandDeps(store=store, status_provider=fake_status, signal_provider=fake_signal)
+    return CommandDeps(store=store, status_provider=fake_status, signal_provider=fake_signal,
+                       nav_provider=lambda: 100000.0)
 
 
 @pytest.fixture

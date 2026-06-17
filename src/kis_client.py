@@ -167,6 +167,27 @@ class HttpKisClient:
         logger.info("KIS 잔고 보유: %d종목 %s", len(out), out)
         return out
 
+    def get_position_pnl(self) -> dict:
+        """보유 종목별 평가손익률(%) — inquire-balance output1 의 evlu_pfls_rt.
+        get_holdings 와 같은 잔고 응답을 공유한다(추가 호출 없음).
+        ⚠️ 라이브 검증 필요(필드명/부호). 실패·결측이면 빈 dict → 표시 생략."""
+        try:
+            data = self._inquire_balance()
+        except Exception:
+            logger.exception("KIS 평가손익률 조회 실패 — 생략")
+            return {}
+        out: dict = {}
+        for row in data.get("output1", []) or []:
+            symbol = row.get("ovrs_pdno") or row.get("pdno")
+            rate = row.get("evlu_pfls_rt")
+            if symbol and rate not in (None, ""):
+                try:
+                    out[symbol] = float(rate)
+                except (TypeError, ValueError):
+                    pass
+        logger.info("KIS 평가손익률: %s", out)
+        return out
+
     def get_cash(self) -> float:
         """주문가능 외화현금(USD). inquire-balance output2 는 손익 summary 라 현금이 없어
         매수가능금액(inquire-psamount)에서 읽는다. 모의투자는 매수 시 자동환전이라 원화가

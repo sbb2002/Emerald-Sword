@@ -335,6 +335,80 @@ def test_handler_catches_provider_error_returns_friendly(store):
     assert "오류가 발생" in r.handle("/signal", 42)
 
 
+# ----- 입출금 기록 (/deposit·/withdraw) -----
+
+def test_deposit_records_cash_flow_after_confirm(store):
+    r = CommandRouter(CommandDeps(store=store, nav_provider=lambda: 100000.0))
+    out1 = r.handle("/deposit 5000", 42)
+    assert "입금" in out1 and "$5,000.00" in out1 and "100,000" in out1
+    assert "기록 완료" in r.handle("y", 42)
+    assert len(store.cash_flows) == 1
+    cf = store.cash_flows[0]
+    assert cf["amount"] == 5000.0
+    assert cf["direction"] == "deposit"
+    assert cf["nav_before"] == 100000.0       # 입금 직전 NAV 가 기록됨(TWR 구간 분할용)
+    assert cf["mode"] == "virtual"
+
+
+def test_withdraw_records_with_direction(store):
+    r = CommandRouter(CommandDeps(store=store, nav_provider=lambda: 100000.0))
+    r.handle("/withdraw 3000", 42)
+    assert "기록 완료" in r.handle("y", 42)
+    assert store.cash_flows[0]["direction"] == "withdraw"
+    assert store.cash_flows[0]["amount"] == 3000.0
+
+
+def test_deposit_cancelled_on_no(store):
+    r = CommandRouter(CommandDeps(store=store, nav_provider=lambda: 100000.0))
+    r.handle("/deposit 5000", 42)
+    assert "취소" in r.handle("n", 42)
+    assert store.cash_flows == []
+
+
+def test_withdraw_exceeding_nav_rejected(store):
+    r = CommandRouter(CommandDeps(store=store, nav_provider=lambda: 1000.0))
+    assert "보다 큽니다" in r.handle("/withdraw 5000", 42)
+    assert store.cash_flows == []             # 확인 단계로 가지 않음
+
+
+def test_deposit_invalid_amount(store):
+    r = CommandRouter(CommandDeps(store=store, nav_provider=lambda: 100000.0))
+    assert "숫자" in r.handle("/deposit abc", 42)
+    assert "사용법" in r.handle("/deposit", 42)
+    assert store.cash_flows == []
+
+
+# ----- /status 수익률 표시 -----
+
+def test_status_shows_twr_pnl_and_cagr_notice(store):
+    def sv():
+        return StatusView(
+            holdings={"QQQM": 324}, cash=998.50, insufficient_for_next=False,
+            server_ok=True, prices={"QQQM": 300.56}, signal="NASDAQ", exrt=1380.0,
+            holding_pnl={"QQQM": -1.65}, twr=-0.0162, cagr=None, running_days=92,
+        )
+    out = CommandRouter(CommandDeps(store=store, status_provider=sv)).handle("/status", 42)
+    assert "-1.65%" in out                     # 보유 평가손익률 병기
+    assert "수익률(TWR): -1.62%" in out         # TWR
+    assert "운용 3개월" in out                  # 1년 미만 → CAGR 숨김 안내 (92//30)
+
+
+def test_status_shows_cagr_when_one_year_passed(store):
+    def sv():
+        return StatusView(
+            holdings={}, cash=110000.0, insufficient_for_next=False, server_ok=True,
+            twr=0.21, cagr=0.10, running_days=800,
+        )
+    out = CommandRouter(CommandDeps(store=store, status_provider=sv)).handle("/status", 42)
+    assert "CAGR: +10.00%" in out
+
+
+def test_status_omits_returns_when_absent(store):
+    # twr=None(예: cash_flows 없음)이면 수익률·CAGR 줄을 아예 표시하지 않는다.
+    out = CommandRouter(CommandDeps(store=store, status_provider=fake_status)).handle("/status", 42)
+    assert "TWR" not in out and "CAGR" not in out
+
+
 def test_bot_replies_friendly_and_does_not_raise_on_error(store, sender):
     r = CommandRouter(CommandDeps(store=store, signal_provider=_boom))
     bot = TelegramBot(42, ModeManager(store), sender, store=store, router=r)

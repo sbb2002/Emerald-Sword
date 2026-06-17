@@ -29,6 +29,8 @@ HELP_TEXT = (
     "/virtual — 모의투자 모드 전환\n"
     "/real — 실전 모드 전환 (확인코드 필요)\n"
     "/emergency-stop — 전량 청산 후 중지\n"
+    "/deposit N — 입금 N(USD) 기록 (수익률 기준)\n"
+    "/withdraw N — 출금 N(USD) 기록\n"
     "/help — 이 도움말"
 )
 
@@ -44,6 +46,10 @@ class StatusView:
     prices: Optional[dict] = None        # {symbol: 현재가} — 평가금액 계산용(없으면 금액 생략)
     signal: Optional[str] = None         # 현재 모멘텀 신호(NASDAQ|GOLD|CASH), best-effort
     exrt: Optional[float] = None         # 원·달러 환율(KRW/USD) — 현금 원화 병기용. 없거나 0이면 USD만
+    holding_pnl: Optional[dict] = None   # {symbol: 평가손익률(%)} — 보유 줄에 병기(KIS evlu_pfls_rt)
+    twr: Optional[float] = None          # 계좌 누적 수익률(시간가중, 입출금 보정). 0.0123 = +1.23%
+    cagr: Optional[float] = None         # TWR 연율화(운용 1년 이상일 때만, 아니면 None)
+    running_days: Optional[int] = None   # 운용 경과 일수 — CAGR 숨김 시 '운용 N개월' 안내
 
 
 def _default_code() -> str:
@@ -59,6 +65,7 @@ class CommandDeps:
     liquidator: Optional[Callable[[], Any]] = None        # -> TransitionResult(legs)  (OrderExecutor.execute("CASH"))
     code_gen: Callable[[], str] = _default_code           # 챌린지 코드 생성(테스트는 고정값 주입)
     clock: Callable[[], float] = time.time                # 비상정지 60초 타임아웃 판정(테스트는 가짜 시계 주입)
+    nav_provider: Optional[Callable[[], float]] = None    # 현재 총자산(USD) — /deposit·/withdraw nav_before 기록용
 
 
 def _fmt_money(value: float) -> str:
@@ -85,6 +92,20 @@ def _fmt_cash(cash: float, exrt: Optional[float]) -> str:
     return usd
 
 
+def _fmt_ratio(rate: Optional[float]) -> str:
+    """비율(0.0123)을 부호 붙은 퍼센트(+1.23%)로. None 이면 '—'. (TWR/CAGR 용)"""
+    if rate is None:
+        return "—"
+    return f"{rate * 100.0:+.2f}%"
+
+
+def _fmt_pct_value(pct: Optional[float]) -> str:
+    """이미 퍼센트값(1.23)을 부호 붙여(+1.23%). None 이면 '—'. (KIS evlu_pfls_rt 용)"""
+    if pct is None:
+        return "—"
+    return f"{pct:+.2f}%"
+
+
 def _is_yes(text: str) -> bool:
     return text.strip().lower() in ("y", "yes")
 
@@ -93,9 +114,11 @@ def _is_yes(text: str) -> bool:
 class _Pending:
     """진행 중인 다중턴 대화(확인/챌린지). chat_id 별로 1건 보관(인메모리)."""
 
-    kind: str                       # pause_confirm | virtual_confirm | real_challenge | estop_confirm | estop_challenge
+    kind: str                       # pause_confirm | virtual_confirm | real_challenge | estop_confirm | estop_challenge | deposit_confirm | withdraw_confirm
     code: Optional[str] = None      # 챌린지 코드(real/estop)
     expires_at: Optional[float] = None  # 만료 시각(estop 60초)
+    amount: Optional[float] = None      # 입출금액 USD (deposit/withdraw 확인)
+    nav_before: Optional[float] = None  # 입출금 직전 총자산 USD (deposit/withdraw 기록용)
 
 
 class CommandRouter:
@@ -133,6 +156,8 @@ class CommandRouter:
             return self._on_estop_confirm(text, chat_id)
         if pending.kind == "estop_challenge":
             return self._on_estop_challenge(pending, text)
+        if pending.kind in ("deposit_confirm", "withdraw_confirm"):
+            return self._on_cashflow_confirm(pending, text)
         return self._command(text, chat_id)  # 알 수 없는 펜딩 — 안전 폴백
 
     # ----- 명령 디스패치 -----
@@ -156,6 +181,10 @@ class CommandRouter:
             return self._real(chat_id)
         if cmd in ("/emergency-stop", "/emergency_stop"):
             return self._emergency_stop(chat_id)
+        if cmd == "/deposit":
+            return self._cashflow("deposit", text, chat_id)
+        if cmd == "/withdraw":
+            return self._cashflow("withdraw", text, chat_id)
         return f"알 수 없는 명령입니다: {text!r}\n\n{HELP_TEXT}"
 
     # ----- 조회 (#11) -----
@@ -164,19 +193,27 @@ class CommandRouter:
         prices = sv.prices or {}
         lines = ["📊 현재 상태"]
         holdings_value = 0.0
+        pnl = sv.holding_pnl or {}
         if sv.holdings:
             for sym, qty in sv.holdings.items():
                 px = prices.get(sym, 0.0)
+                pnl_str = f", {_fmt_pct_value(pnl[sym])}" if pnl.get(sym) is not None else ""
                 if px > 0:
                     val = qty * px
                     holdings_value += val
-                    lines.append(f"  보유: {sym} {qty}주 (~{_fmt_money(val)})")
+                    lines.append(f"  보유: {sym} {qty}주 (~{_fmt_money(val)}{pnl_str})")
                 else:
-                    lines.append(f"  보유: {sym} {qty}주")
+                    lines.append(f"  보유: {sym} {qty}주{f' ({_fmt_pct_value(pnl[sym])})' if pnl.get(sym) is not None else ''}")
         else:
             lines.append("  보유: 없음 (현금)")
         lines.append(f"  현금: {_fmt_cash(sv.cash, sv.exrt)}")
         lines.append(f"  총자산: ~{_fmt_money(holdings_value + sv.cash)}")
+        if sv.twr is not None:
+            lines.append(f"  수익률(TWR): {_fmt_ratio(sv.twr)}")
+            if sv.cagr is not None:
+                lines.append(f"  CAGR: {_fmt_ratio(sv.cagr)}")
+            elif sv.running_days is not None:
+                lines.append(f"  CAGR: 운용 {sv.running_days // 30}개월 (1년 경과 후 표시)")
         if sv.signal:
             label = {
                 "NASDAQ": "NASDAQ (QQQM)",
@@ -256,6 +293,42 @@ class CommandRouter:
             return "이미 작동 중입니다."
         self._deps.store.set_paused(False)
         return "▶️ 자동거래를 재개했습니다."
+
+    # ----- 입출금 기록 (수익률 TWR 의 기준) -----
+    def _cashflow(self, direction: str, text: str, chat_id: int) -> str:
+        verb = "입금" if direction == "deposit" else "출금"
+        parts = text.split()
+        if len(parts) < 2:
+            return f"사용법: /{direction} 금액(USD)  예: /{direction} 5000"
+        try:
+            amount = float(parts[1].replace(",", "").lstrip("$"))
+        except ValueError:
+            return f"금액은 숫자여야 합니다. 예: /{direction} 5000"
+        if amount <= 0:
+            return "금액은 0보다 커야 합니다."
+        nav = self._deps.nav_provider() if self._deps.nav_provider else None
+        if nav is None:
+            return "현재 총자산을 조회할 수 없어 기록을 보류합니다. 잠시 후 다시 시도하세요."
+        if direction == "withdraw" and amount > nav:
+            return f"출금액({_fmt_money(amount)})이 현재 총자산({_fmt_money(nav)})보다 큽니다. 확인 후 다시 시도하세요."
+        self._pending[chat_id] = _Pending(kind=f"{direction}_confirm", amount=amount, nav_before=nav)
+        return (
+            f"{verb} {_fmt_money(amount)} 을(를) 기록할까요? (현재 총자산 {_fmt_money(nav)} 기준)\n"
+            "※ 실제 송금이 아니라 수익률 계산용 기록입니다. (y/n)"
+        )
+
+    def _on_cashflow_confirm(self, pending: _Pending, text: str) -> str:
+        direction = "deposit" if pending.kind == "deposit_confirm" else "withdraw"
+        verb = "입금" if direction == "deposit" else "출금"
+        if not _is_yes(text):
+            return f"{verb} 기록을 취소했습니다."
+        self._deps.store.record_cash_flow(
+            mode=self._deps.store.get_trading_mode(),
+            amount=pending.amount,
+            direction=direction,
+            nav_before=pending.nav_before,
+        )
+        return f"✅ {verb} {_fmt_money(pending.amount)} 기록 완료. 수익률(TWR) 계산에 반영됩니다."
 
     # ----- 모드 전환 (#13) -----
     def _virtual(self, chat_id: int) -> str:

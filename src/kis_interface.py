@@ -49,6 +49,7 @@ class KisClient(Protocol):
 
     # 읽기
     def get_holdings(self) -> dict: ...        # {symbol: quantity}
+    def get_position_pnl(self) -> dict: ...    # {symbol: 평가손익률(%)} — 라이브 검증 필요
     def get_cash(self) -> float: ...           # 주문 가능 현금(USD)
     def get_exrt(self) -> float: ...           # 원·달러 환율(KRW/USD), 실패 시 0.0
     def get_price(self, symbol: str) -> float: ...

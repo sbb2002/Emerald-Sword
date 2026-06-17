@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .db import get_connection
+from .returns import CashFlow
 
 VALID_MODES = ("virtual", "real")
 
@@ -155,4 +156,34 @@ class StateStore:
                 balance_before=_to_float(r[8]),
                 balance_after=_to_float(r[9]),
             ))
+        return out
+
+    # ----- 입출금 (cash_flows) — 수익률 TWR/CAGR 의 기준 -----
+    def record_cash_flow(
+        self, *, mode: str, amount: float, direction: str, nav_before: float, note: str = "",
+    ) -> None:
+        """입출금 1건 기록. amount 는 양수, 방향은 direction(deposit|withdraw).
+        nav_before 는 입출금 직전 총자산(USD) — TWR 구간 분할에 쓴다."""
+        with get_connection(self._database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "INSERT INTO cash_flows (mode, amount, direction, nav_before, note)"
+                    " VALUES (%s, %s, %s, %s, %s);",
+                    (mode, amount, direction, nav_before, note),
+                )
+
+    def read_cash_flows(self, mode: str) -> list:
+        """현재 모드의 입출금을 시간순으로 읽어 CashFlow(부호 적용)로 돌려준다."""
+        with get_connection(self._database_url) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT occurred_at, amount, direction, nav_before"
+                    " FROM cash_flows WHERE mode = %s ORDER BY occurred_at, id;",
+                    (mode,),
+                )
+                rows = cur.fetchall()
+        out: list = []
+        for occurred_at, amount, direction, nav_before in rows:
+            signed = float(amount) if direction == "deposit" else -float(amount)
+            out.append(CashFlow(occurred_at=occurred_at, signed_amount=signed, nav_before=float(nav_before)))
         return out

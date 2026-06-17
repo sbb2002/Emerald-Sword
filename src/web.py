@@ -10,7 +10,8 @@ from __future__ import annotations
 import logging
 import os
 from contextlib import asynccontextmanager
-from typing import Any
+from datetime import datetime
+from typing import Any, Optional
 
 from fastapi import FastAPI, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -25,6 +26,7 @@ from .mode_manager import ModeManager
 from .momentum import decide_signal
 from .order_executor import OrderExecutor
 from .position_service import PositionService
+from .returns import compute_cagr, compute_twr, running_days
 from .state_store import StateStore
 from .telegram_bot import TelegramBot
 from .telegram_client import TelegramClient
@@ -73,10 +75,29 @@ async def lifespan(app: FastAPI):
                 exrt = kis.get_exrt() or None
             except Exception:
                 exrt = None
+            pnl = None
+            try:  # 보유 평가손익률(KIS evlu_pfls_rt) — best-effort
+                pnl = kis.get_position_pnl() or None
+            except Exception:
+                pnl = None
+            # 총자산(NAV) = 보유 평가금액 + 현금 → 수익률(TWR/CAGR) 계산
+            nav = snap.cash + sum(qty * prices.get(s, 0.0) for s, qty in snap.holdings.items())
+            twr = cagr = None
+            rdays: Optional[int] = None
+            try:  # 수익률도 best-effort — cash_flows 없거나 실패하면 생략
+                flows = store.read_cash_flows(store.get_trading_mode())
+                twr = compute_twr(flows, nav)
+                now = datetime.now()
+                rdays = running_days(flows, now)
+                if flows:
+                    cagr = compute_cagr(twr, min(f.occurred_at for f in flows), now)
+            except Exception:
+                twr = cagr = rdays = None
             return StatusView(
                 holdings=snap.holdings, cash=snap.cash,
                 insufficient_for_next=insufficient, server_ok=True,
                 prices=prices, signal=signal, exrt=exrt,
+                holding_pnl=pnl, twr=twr, cagr=cagr, running_days=rdays,
             )
         except Exception:
             # KIS 도달 실패 등 — 서버 상태를 '오류'로 표시(명령 자체는 200 으로 응답).
@@ -95,12 +116,30 @@ async def lifespan(app: FastAPI):
         pos = PositionService(kis)
         return OrderExecutor(kis, pos, mode=store.get_trading_mode()).execute("CASH")
 
+    def nav_provider() -> Optional[float]:
+        # /deposit·/withdraw 가 입출금 직전 총자산(USD)을 기록하기 위한 NAV 조회.
+        try:
+            kis = _kis()
+            snap = PositionService(kis).snapshot()
+            nav = snap.cash
+            for sym, qty in snap.holdings.items():
+                try:
+                    px = kis.get_price(sym)
+                    if px and px > 0:
+                        nav += qty * px
+                except Exception:
+                    pass
+            return nav
+        except Exception:
+            return None
+
     router = CommandRouter(
         CommandDeps(
             store=store,
             status_provider=status_provider,
             signal_provider=signal_provider,
             liquidator=liquidator,
+            nav_provider=nav_provider,
         )
     )
     app.state.settings = settings
