@@ -167,6 +167,19 @@ def test_log_omits_fill_price_and_balance_when_none(router, store):
     assert "[NASDAQ]" in out
 
 
+def test_record_trade_persists_order_price_to_log(router, store):
+    # place_order 의 지정가(order.price)가 record_trade → fill_price → /log 로 흐른다(저장 경로).
+    from src.kis_interface import OrderResult
+    from src.order_executor import Leg
+    leg = Leg("BUY", "QQQM", 3, placed=True,
+              order=OrderResult(order_id="o1", symbol="QQQM", side="BUY",
+                                quantity=3, accepted=True, price=300.0))
+    store.record_trade(mode="virtual", signal="NASDAQ", legs=[leg],
+                       balance_before=1000.0, balance_after=100.0)
+    out = router.handle("/log", 42)
+    assert "@ $300.00" in out
+
+
 # ----- 통제 명령 (#12) -----
 
 def test_pause_asks_confirmation_then_pauses(router, store):

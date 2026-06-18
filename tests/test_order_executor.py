@@ -30,7 +30,9 @@ class FakeKis:
 
     def place_order(self, symbol, side, quantity):
         self.orders.append((symbol, side, quantity))
-        return OrderResult(order_id=f"o{len(self.orders)}", symbol=symbol, side=side, quantity=quantity, accepted=True)
+        # 실제 place_order 처럼 현재가를 지정가(price)로 담는다 — 거래 로그 fill_price 출처.
+        return OrderResult(order_id=f"o{len(self.orders)}", symbol=symbol, side=side,
+                           quantity=quantity, accepted=True, price=self._price)
 
 
 def _exec(kis):
@@ -84,3 +86,12 @@ def test_insufficient_cash_no_buy():
     kis = FakeKis(holdings={}, cash=100.0, price=300.0)  # 1주 미만
     res = _exec(kis).execute("NASDAQ")
     assert kis.orders == []
+
+
+def test_placed_leg_carries_order_price():
+    # 주문 지정가가 leg.order.price 로 보존돼야 거래 로그(fill_price)·/log 에 남는다.
+    kis = FakeKis(holdings={"GLDM": 4}, cash=1000.0, price=300.0)
+    res = _exec(kis).execute("NASDAQ")
+    placed = {leg.symbol: leg for leg in res.legs if leg.placed}
+    assert placed["GLDM"].order.price == 300.0   # 매도 leg 도 지정가 보존
+    assert placed["QQQM"].order.price == 300.0   # 매수 leg

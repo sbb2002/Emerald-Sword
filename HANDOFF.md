@@ -9,7 +9,7 @@
 
 ## ⚡ 현재 상태 (2026-06-17 갱신)
 
-> Phase A/B/C 구현·테스트 완료(**122 passed, 1 skipped**). Render 배포 + KIS 모의계좌로 실제 매수까지 성공. 현재는 라이브 안정화 + 후속 개선 단계.
+> Phase A/B/C 구현·테스트 완료(**125 passed, 1 skipped**). Render 배포 + KIS 모의계좌로 실제 매수까지 성공. 현재는 라이브 안정화 + 후속 개선 단계.
 
 ### 배포 상태
 - **`main` = 배포 브랜치**(autoDeploy). 다른 머신: `git checkout main && git pull` 후 main 기준 작업.
@@ -49,7 +49,8 @@
   - `src/migrations/003_cash_flows.sql`: `cash_flows`(mode별) + 모의 시드 $100k(nav_before=0). `StateStore.record_cash_flow`/`read_cash_flows`.
   - `/deposit N`·`/withdraw N` — **`/help` 에 노출하지 않는 '숨은 명령'**(평상시 쓸 일 없어 도움말에서 제외, 동작은 정상). 현재 NAV 조회 → 확인(y/n) → 기록(실제 송금이 아니라 수익률 기준점). **실전 전환 후 자금 추가 시에만** 사용. `web.py` 가 `nav_provider` 주입. ※ 명령 자체는 `commands.py` `_command` 디스패치에 살아 있음.
   - `/status`: 보유 줄에 평가손익률 병기 + `수익률(TWR)` + `CAGR`(1년 미만은 '운용 N개월' 안내).
-  - **남은 검증**: ① `kis_client.get_position_pnl`(evlu_pfls_rt 필드명/부호) 라이브 확인 — 실패 시 보유 평가손익률만 생략(나머지 정상). ② 마이그레이션 003 자동 적용(시드 1행 삽입). ③ 시드 `occurred_at`=배포 시점이라 CAGR 운용연수가 근사 — 정확한 시드일은 DB 에서 수정 가능(어차피 1년 전까진 CAGR 숨김).
+  - **라이브 검증 완료**: `evlu_pfls_rt` −0.82% 정상 표시, 마이그레이션 003 자동 적용, TWR −1.62% 정상 표시. ③ 시드 `occurred_at`=배포 시점이라 CAGR 운용연수가 근사 — 어차피 1년 전까진 CAGR 숨김.
+  - **TWR tz 버그 수정** (`5573e8a`): Neon TIMESTAMPTZ → psycopg가 tz-aware datetime 반환 / `datetime.now()`는 naive → `running_days`에서 `TypeError`. `returns.py`에 `_naive_utc()` 헬퍼 추가, `web.py`를 `datetime.now(timezone.utc)`로 수정. 회귀 테스트 `test_tz_aware_occurred_at_does_not_crash` 추가(FakeStore가 naive라 테스트로 못 잡은 케이스). 라이브 확인 완료.
 
 ### 🚧 다음 세션에서 할 일
 
@@ -58,9 +59,11 @@
 - `after` 스냅샷이 주문 직후 찍혀 체결이 늦게 잡힐 수 있음. 빈번하면 `src/strategy_cycle.py` step 8 전 1~2초 지연 추가.
 - 관련 파일: `src/strategy_cycle.py` → `run_cycle()` step 8, `_format_report()`, `_leg_filled()`.
 
-#### 2. (선택) `/log` 체결가 실제 저장
-- 현재 체결가(`fill_price`)는 DB에 저장되지 않아 `/log`에서 항상 생략됨(표시 로직은 이미 있음).
-- 저장하려면 `strategy_cycle.run_cycle` step 8 의 `record_trade(...)` 에 `fill_price` 전달 + `state_store.record_trade`/INSERT 에 컬럼 추가 필요(체결가는 `_format_report` 가 추정하는 값과 동일 출처).
+#### 2. ✅ (완료, 2026-06-18) `/log` 체결가 저장
+- `OrderResult.price`(주문 지정가) 추가 → `place_order` 가 담아 반환 → `record_trade` 가 `fill_price` 로 저장.
+- 정기 월말 거래(`strategy_cycle` step 8)·`/emergency-stop`(`commands._emergency_stop`) 둘 다 `transition.legs`(leg.order.price 포함)를 넘겨 저장됨.
+- **한계(정직)**: 진짜 체결평균가(`Execution.avg_price`)가 아니라 **주문 지정가**다. 미국주식은 현재가 지정가(`ORD_DVSN=00`) 주문이라 체결가의 근사. `get_executions` 스텁(0 반환) 해소 전까지 이 근사 유지.
+- ⚠️ **소급 안 됨** — 기존 거래(2026-06-16 2건)는 가격 없이 저장됐으니 `/log` 에 계속 생략. **다음 거래부터** `@ $가격` 표시.
 
 > 직전 #2(/status 원화)·#3(거래일 게이트)·#4(/log 표시 계층)는 이번 세션에 완료 → 위 "이번 세션 수정" 참고.
 
@@ -110,6 +113,6 @@
 
 ## 환경/실행 메모
 - 현재 브랜치: `fix/fill-report`(origin/main에 푸시 완료). 다른 머신: `git checkout main && git pull`.
-- 테스트: 레포 루트에서 `python -m pytest` → **122 passed, 1 skipped**.
+- 테스트: 레포 루트에서 `python -m pytest` → **125 passed, 1 skipped**.
 - 비밀값은 전부 Render 환경변수(`.env.example` 참고). 거래종목 QQQM/GLDM 고정, 정수 주문, 기본 모드 `virtual`.
 - 커밋 트레일러: `Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>`.

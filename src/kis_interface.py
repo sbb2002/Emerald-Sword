@@ -25,6 +25,7 @@ class OrderResult:
     quantity: int
     accepted: bool
     raw: Optional[dict] = None
+    price: float = 0.0  # 주문 지정가(USD). 미국주식은 현재가 지정가 주문이라 체결가의 근사. 0=미상.
 
 
 @dataclass(frozen=True)

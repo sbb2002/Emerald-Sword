@@ -122,11 +122,13 @@ class StateStore:
                 for leg in legs:
                     if not getattr(leg, "placed", False):
                         continue
+                    fill_price = getattr(getattr(leg, "order", None), "price", None) or None  # 0/누락은 NULL
                     cur.execute(
                         "INSERT INTO trade_log"
-                        " (mode, signal, side, ticker, quantity, reason, balance_before, balance_after)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s);",
-                        (mode, signal, leg.side, leg.symbol, leg.quantity, reason, balance_before, balance_after),
+                        " (mode, signal, side, ticker, quantity, reason, fill_price, balance_before, balance_after)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);",
+                        (mode, signal, leg.side, leg.symbol, leg.quantity, reason,
+                         fill_price, balance_before, balance_after),
                     )
 
     def read_trades(self, limit: Optional[int] = None) -> list:

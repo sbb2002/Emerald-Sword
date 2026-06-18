@@ -366,7 +366,8 @@ class HttpKisClient:
         logger.info("KIS 주문: %s %s %d주 → rt_cd=%s ODNO=%s msg=%s",
                     side, symbol, quantity, data.get("rt_cd"), order_id, data.get("msg1", ""))
         return OrderResult(
-            order_id=order_id, symbol=symbol, side=side, quantity=int(quantity), accepted=ok, raw=data
+            order_id=order_id, symbol=symbol, side=side, quantity=int(quantity),
+            accepted=ok, raw=data, price=price,  # 지정가(현재가) — 거래 로그 fill_price 로 저장됨
         )
 
     def get_open_orders(self) -> list:

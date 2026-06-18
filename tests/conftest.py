@@ -70,10 +70,11 @@ class FakeStore:
         for leg in legs:
             if not getattr(leg, "placed", False):
                 continue
+            fp = getattr(getattr(leg, "order", None), "price", None) or None
             self.trades.insert(0, TradeRecord(
                 executed_at="now", mode=mode, signal=signal,
                 side=leg.side, ticker=leg.symbol, quantity=leg.quantity, reason=reason,
-                balance_before=balance_before, balance_after=balance_after,
+                fill_price=fp, balance_before=balance_before, balance_after=balance_after,
             ))
 
 
