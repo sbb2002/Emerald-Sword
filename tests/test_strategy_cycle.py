@@ -71,6 +71,9 @@ class Pos:
 
 
 class FakePositions:
+    # 결정적 평가가격(value_holdings/NAV 검증용). 실제 KIS get_price 대체.
+    PRICES = {"QQQM": 300.0, "GLDM": 60.0}
+
     def __init__(self, snapshots):
         self._snaps = list(snapshots)
         self._i = 0
@@ -79,6 +82,9 @@ class FakePositions:
         s = self._snaps[min(self._i, len(self._snaps) - 1)]
         self._i += 1
         return s
+
+    def value_holdings(self, holdings):
+        return sum(qty * self.PRICES.get(sym, 0.0) for sym, qty in holdings.items())
 
 
 class FakeExecutor:
@@ -199,7 +205,11 @@ def test_executes_and_reports_with_mode_tag_and_details():
     assert msg.startswith("[모의]")               # 모드 태그
     assert "매도: GLDM 4주" in msg                  # 매도 내역
     assert "매수: QQQM 3주" in msg                  # 매수 내역
-    assert "잔고: $1000.0 → $50.0" in msg           # 잔고 변화
+    assert "현금: $1,000.00 → $50.00" in msg        # 현금 변화(주문가능 외화현금)
+    # 총자산(NAV) 변화 — before: 1000+4×60=1240, after: 50+3×300=950
+    assert "총자산: $1,240.00 → $950.00" in msg
+    trade = f["store"].trades[-1]
+    assert trade["nav_before"] == 1240.0 and trade["nav_after"] == 950.0
 
 
 def test_partial_fill_reported_honestly():

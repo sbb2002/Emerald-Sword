@@ -117,19 +117,10 @@ async def lifespan(app: FastAPI):
         return OrderExecutor(kis, pos, mode=store.get_trading_mode()).execute("CASH")
 
     def nav_provider() -> Optional[float]:
-        # /deposit·/withdraw 가 입출금 직전 총자산(USD)을 기록하기 위한 NAV 조회.
+        # 총자산(USD) 조회 — /deposit·/withdraw 의 입출금 직전 NAV 기록,
+        # /emergency-stop 의 청산 전후 NAV 기록(거래 로그)에 쓰인다.
         try:
-            kis = _kis()
-            snap = PositionService(kis).snapshot()
-            nav = snap.cash
-            for sym, qty in snap.holdings.items():
-                try:
-                    px = kis.get_price(sym)
-                    if px and px > 0:
-                        nav += qty * px
-                except Exception:
-                    pass
-            return nav
+            return PositionService(_kis()).nav()
         except Exception:
             return None
 

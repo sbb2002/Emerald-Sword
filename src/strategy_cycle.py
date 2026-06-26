@@ -64,7 +64,15 @@ def _leg_filled(leg, before, after) -> int:
     return max(0, min(moved, leg.quantity))
 
 
-def _format_report(target: str, transition, before, after, now: datetime) -> str:
+def _fmt_usd(value) -> str:
+    try:
+        return f"${float(value):,.2f}"
+    except (TypeError, ValueError):
+        return f"${value}"
+
+
+def _format_report(target: str, transition, before, after, now: datetime,
+                   nav_before=None, nav_after=None) -> str:
     # 접수(rt_cd=0)가 아니라 '실제 체결'을 보고한다 — 부분체결을 정직하게 알린다.
     rows = [(leg, _leg_filled(leg, before, after)) for leg in transition.placed_orders]
     fully = all(filled >= leg.quantity for leg, filled in rows)
@@ -78,7 +86,11 @@ def _format_report(target: str, transition, before, after, now: datetime) -> str
             lines.append(f"  {verb}: {leg.symbol} {filled}/{leg.quantity}주 체결, {leg.quantity - filled}주 미체결 ⚠️")
     if not fully:
         lines.append("  ⚠️ 미체결분은 장중 자동체결 대기 → 장마감까지 안 되면 만료됩니다.")
-    lines.append(f"  잔고: ${before.cash} → ${after.cash}")
+    # 총자산(NAV)을 먼저, 현금을 그다음 — 원화 자동환전 모의계좌에서 현금(주문가능 외화현금)만
+    # 보면 환전 전 매수여력이 빠져 어긋나 보이므로 통화 모호성 없는 총자산을 함께 표시한다.
+    if nav_before is not None and nav_after is not None:
+        lines.append(f"  총자산: {_fmt_usd(nav_before)} → {_fmt_usd(nav_after)}")
+    lines.append(f"  현금: {_fmt_usd(before.cash)} → {_fmt_usd(after.cash)}")
     return "\n".join(lines)
 
 
@@ -135,6 +147,9 @@ def run_cycle(deps: CycleDeps) -> CycleResult:
         deps.notify(f"ℹ️ {deps.now().strftime('%Y-%m')} 신호 {signal.target} — 이미 목표 보유, 무거래.")
         return CycleResult(UNCHANGED, target=signal.target)
 
+    # 5.5) 거래 전 총자산(NAV) — 보유를 현재가로 평가. 사후보고·/log 의 '총자산 변화' 기준.
+    nav_before = before.cash + deps.positions.value_holdings(before.holdings)
+
     # 6) 2-leg 전환 + 체결 정산
     transition = deps.order_executor.execute(signal.target)
     settlement = deps.fill_handler.settle(transition)
@@ -155,12 +170,16 @@ def run_cycle(deps: CycleDeps) -> CycleResult:
 
     # 8) 사후 체결 보고 + 거래 로그
     after = deps.positions.snapshot()
+    nav_after = after.cash + deps.positions.value_holdings(after.holdings)
     deps.store.record_trade(
         mode=deps.mode,
         signal=signal.target,
         legs=transition.legs,
         balance_before=before.cash,
         balance_after=after.cash,
+        nav_before=nav_before,
+        nav_after=nav_after,
     )
-    deps.notify(_format_report(signal.target, transition, before, after, deps.now()))
+    deps.notify(_format_report(signal.target, transition, before, after, deps.now(),
+                               nav_before=nav_before, nav_after=nav_after))
     return CycleResult(EXECUTED, target=signal.target)

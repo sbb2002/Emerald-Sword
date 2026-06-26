@@ -65,7 +65,7 @@ class FakeStore:
         return self.trades[:limit] if limit else list(self.trades)
 
     def record_trade(self, *, mode, signal, legs, balance_before=None, balance_after=None,
-                     reason="monthly_signal"):
+                     nav_before=None, nav_after=None, reason="monthly_signal"):
         # StateStore.record_trade 와 동일하게 placed 인 leg 만 최신순으로 적재한다.
         for leg in legs:
             if not getattr(leg, "placed", False):
@@ -75,6 +75,7 @@ class FakeStore:
                 executed_at="now", mode=mode, signal=signal,
                 side=leg.side, ticker=leg.symbol, quantity=leg.quantity, reason=reason,
                 fill_price=fp, balance_before=balance_before, balance_after=balance_after,
+                nav_before=nav_before, nav_after=nav_after,
             ))
 
 
