@@ -12,11 +12,18 @@
 """
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import dataclass
 from typing import Optional
 
 from .kis_interface import KisClient, OrderResult
 from .position_service import PositionService
+
+logger = logging.getLogger(__name__)
+
+_SETTLE_TIMEOUT = 120.0   # 정산 대기 최대 시간(초)
+_SETTLE_INTERVAL = 5.0    # 폴링 간격(초)
 
 TICKER = {"NASDAQ": "QQQM", "GOLD": "GLDM"}
 ALL_TICKERS = ("QQQM", "GLDM")
@@ -50,6 +57,18 @@ class OrderExecutor:
         self._positions = positions
         self._mode = mode
 
+    def _wait_settlement(self, target_symbol: str) -> None:
+        """매도 대금 정산 완료까지 대기. sll_ruse_psbl_amt == 0 이면 전액 즉시 재사용 가능."""
+        price = self._client.get_price(target_symbol) or 1.0
+        deadline = time.monotonic() + _SETTLE_TIMEOUT
+        while time.monotonic() < deadline:
+            pending = self._client.get_sll_ruse_amt(target_symbol, price)
+            if pending == 0.0:
+                return
+            logger.info("정산 대기 중 sll_ruse_psbl_amt=$%.2f — %.0f초 후 재조회", pending, _SETTLE_INTERVAL)
+            time.sleep(_SETTLE_INTERVAL)
+        logger.warning("정산 대기 %.0f초 초과 — 매수 강행", _SETTLE_TIMEOUT)
+
     def _open_orders(self) -> list:
         try:
             return self._client.get_open_orders()
@@ -69,6 +88,7 @@ class OrderExecutor:
             return any(o.symbol == symbol and o.side == side for o in open_orders)
 
         # 1) 매도 leg — 목표가 아닌 보유 종목 전량 매도
+        sold = False
         for sym in ALL_TICKERS:
             qty = int(holdings.get(sym, 0))
             if sym == target_symbol or qty <= 0:
@@ -78,6 +98,11 @@ class OrderExecutor:
                 continue
             order = self._client.place_order(sym, "SELL", qty)
             legs.append(Leg("SELL", sym, qty, placed=True, order=order))
+            sold = True
+
+        # 매도가 있었으면 정산 완료까지 대기 (sll_ruse_psbl_amt == 0)
+        if sold and target_symbol is not None:
+            self._wait_settlement(target_symbol)
 
         # 2) 매수 leg — 목표 종목을 정수 수량으로 매수
         if target_symbol is not None:
