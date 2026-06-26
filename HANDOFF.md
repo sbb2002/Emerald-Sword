@@ -84,6 +84,7 @@
 
 ### 주의 (현 상태)
 - **토큰 403 Forbidden**: web 명령(/status·/emergency-stop) 직후 1분 내 cron 트리거 겹치면 발생. 1~2분 텀 유지.
+- **⚠️ 한 명령 처리에서 KIS 클라이언트(토큰 발급)는 1회만**: `web.py` `_kis()` 는 호출마다 새 인스턴스(토큰 없음)를 만든다. 한 명령에서 KIS 호출이 필요한 콜러블(nav_provider·liquidator 등)을 2개 이상 부르면 각자 토큰을 발급 → 두 번째가 분당 제한(403)에 걸려 실패한다. 2026-06-26 `/emergency-stop` 가 이 이유로 청산 실패(NAV 조회 후 청산 → 청산 토큰 403). 그래서 `_on_estop_challenge` 는 NAV 를 조회하지 않는다.
 - **`fill_monitor` 부분체결 재시도 비활성화** 상태. `get_executions`는 스텁(0 반환). 부분체결 자동추격 없이 감지+보고만 함. (의도된 설계 — 추후 빈도 모니터링 후 결정)
 - 깨끗한 재검증 시: `/emergency-stop`(청산, 자동 pause됨) → `/resume` → 트리거(명령↔트리거 1~2분 텀).
 

@@ -368,15 +368,6 @@ class CommandRouter:
         self._deps.store.set_trading_mode("real")
         return "🔴 실전 모드로 전환했습니다. 실제 자금이 거래됩니다."
 
-    def _nav(self) -> Optional[float]:
-        """현재 총자산(USD) — nav_provider best-effort. 미주입·실패 시 None."""
-        if not self._deps.nav_provider:
-            return None
-        try:
-            return self._deps.nav_provider()
-        except Exception:
-            return None
-
     # ----- 비상 정지 (#14) -----
     def _emergency_stop(self, chat_id: int) -> str:
         self._pending[chat_id] = _Pending(kind="estop_confirm")
@@ -405,7 +396,10 @@ class CommandRouter:
         #    청산 도중 프로세스가 죽어도 '일시정지 + 일부청산'이라는 안전한 실패 모드가 되어
         #    다음 월말 재매수가 차단된다(User Story 38). execute("CASH") 는 멱등이라 재실행으로 마무리 가능.
         self._deps.store.set_paused(True)
-        nav_before = self._nav()  # 청산 직전 총자산(best-effort — 실패 시 None → /log 표시 생략)
+        # ⚠️ 여기서 NAV 를 조회하지 않는다(토큰 분당 1회 제한). nav_provider 는 별도 KIS
+        #    클라이언트로 토큰을 새로 발급하는데, 이어지는 청산(liquidator)도 또 다른 클라이언트로
+        #    토큰을 발급한다 → 두 번째 발급이 KIS 분당 제한(403)에 걸려 '청산 자체'가 실패한다.
+        #    안전 최우선 경로라 부가기능(NAV 로그)보다 청산 성공을 우선한다(2026-06-26 회귀 수정).
         try:
             transition = self._deps.liquidator()
         except Exception:
@@ -419,8 +413,6 @@ class CommandRouter:
             signal="CASH",
             legs=transition.legs,
             reason="emergency_stop",
-            nav_before=nav_before,
-            nav_after=self._nav(),  # 청산 접수 직후 총자산(매도→현금이라 값 보존, 근사)
         )
         return self._format_liquidation(transition)
 
