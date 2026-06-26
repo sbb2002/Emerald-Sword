@@ -5,6 +5,25 @@
 
 ---
 
+## 2026-06-27 세션 (장중 검증 + 방어 로직)
+
+### ✅ 장중 verify_switch 검증 완료 — 정산 타이밍 문제 확인
+- **결과**: `sll_ruse_psbl_amt`(매도 재사용 대기 금액)가 매도 직후 **전체 매도금의 ~30%** 만 즉시 반영됨. 나머지 70%는 KIS 내부 정산 대기. QQQM→GLDM 전환에서 원래 ~1,177주 매수 가능해야 하는데 **372주(31%)만 매수** 됨.
+- **판정**: HANDOFF 우려사항 #1 실제 확인 — `strategy_cycle` 방어 코드 필요.
+- **부산물**: verify_switch 이중 매수로 모의계좌 시드 $96K→$63K 감소(실전 무관). `psycopg` 로컬 미설치 문제도 이 과정에서 발견·해결.
+
+### ✅ 매도→매수 정산 대기 폴링 구현 — `765ca8a` (feature/defence-logic)
+- **수정**: `order_executor.execute()` 에서 매도 leg 접수 후 `sll_ruse_psbl_amt == 0` 될 때까지 폴링(최대 120초, 5초 간격). timeout 초과 시 경고 로그 후 매수 강행.
+- `kis_client._query_psamount()` 헬퍼로 `get_cash`·`get_exrt`·`get_buyable_qty`·`get_sll_ruse_amt` 중복 제거.
+- `kis_interface.KisClient` 에 `get_sll_ruse_amt()` 추가.
+- 테스트 4개 추가(즉시완료·폴링재시도·비매도·timeout) → 130 passed.
+
+### ✅ cron.py UTC now 주입 — `765ca8a`
+- **문제**: 로컬 KST 환경에서 `python -m src.cron` 실행 시 `datetime.now()`가 토요일(KST)을 반환해 거래일 게이트에서 "비거래일" 오판.
+- **수정**: `CycleDeps(now=lambda: datetime.now(timezone.utc).replace(tzinfo=None))` 주입. 서버(Render UTC)·로컬 모두 UTC 기준 통일.
+
+---
+
 ## 2026-06-26 세션
 
 ### ✅ (a) `/log`·사후보고에 총자산(NAV) + 현금 병기 — `a9bad16`

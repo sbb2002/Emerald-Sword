@@ -55,6 +55,7 @@ class KisClient(Protocol):
     def get_exrt(self) -> float: ...           # 원·달러 환율(KRW/USD), 실패 시 0.0
     def get_price(self, symbol: str) -> float: ...
     def get_buyable_qty(self, symbol: str, price: float) -> int: ...  # KIS 계산 최대 주문가능 수량
+    def get_sll_ruse_amt(self, symbol: str, price: float) -> float: ...  # 매도 재사용 대기 금액(USD); 0=정산 완료
     def get_daily_closes(self, symbol: str, count: int) -> list: ...  # [DailyClose] 최신순
 
     # 쓰기/주문
