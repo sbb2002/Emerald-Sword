@@ -27,8 +27,10 @@ class TradeRecord:
     quantity: Optional[int]
     reason: Optional[str]       # monthly_signal | emergency_stop | ...
     fill_price: Optional[float] = None       # 체결가(없으면 None — 표시 시 생략)
-    balance_before: Optional[float] = None   # 거래 전 현금 잔고
-    balance_after: Optional[float] = None     # 거래 후 현금 잔고
+    balance_before: Optional[float] = None   # 거래 전 현금(주문가능 외화현금, USD)
+    balance_after: Optional[float] = None     # 거래 후 현금(주문가능 외화현금, USD)
+    nav_before: Optional[float] = None       # 거래 전 총자산(보유 평가금액+현금, USD)
+    nav_after: Optional[float] = None        # 거래 후 총자산(보유 평가금액+현금, USD)
 
 
 def _to_float(value) -> Optional[float]:
@@ -115,6 +117,8 @@ class StateStore:
         legs,
         balance_before=None,
         balance_after=None,
+        nav_before=None,
+        nav_after=None,
         reason: str = "monthly_signal",
     ) -> None:
         with get_connection(self._database_url) as conn:
@@ -125,17 +129,18 @@ class StateStore:
                     fill_price = getattr(getattr(leg, "order", None), "price", None) or None  # 0/누락은 NULL
                     cur.execute(
                         "INSERT INTO trade_log"
-                        " (mode, signal, side, ticker, quantity, reason, fill_price, balance_before, balance_after)"
-                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s);",
+                        " (mode, signal, side, ticker, quantity, reason, fill_price,"
+                        " balance_before, balance_after, nav_before, nav_after)"
+                        " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);",
                         (mode, signal, leg.side, leg.symbol, leg.quantity, reason,
-                         fill_price, balance_before, balance_after),
+                         fill_price, balance_before, balance_after, nav_before, nav_after),
                     )
 
     def read_trades(self, limit: Optional[int] = None) -> list:
         """거래 로그를 최신순으로 읽는다. limit=None 이면 전체(/log [N])."""
         sql = (
             "SELECT executed_at, mode, signal, side, ticker, quantity, reason,"
-            " fill_price, balance_before, balance_after"
+            " fill_price, balance_before, balance_after, nav_before, nav_after"
             " FROM trade_log ORDER BY executed_at DESC, id DESC"
         )
         params: tuple = ()
@@ -157,6 +162,8 @@ class StateStore:
                 fill_price=_to_float(r[7]),
                 balance_before=_to_float(r[8]),
                 balance_after=_to_float(r[9]),
+                nav_before=_to_float(r[10]),
+                nav_after=_to_float(r[11]),
             ))
         return out
 

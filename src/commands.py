@@ -259,15 +259,22 @@ class CommandRouter:
             mark = " ⚠️비상청산" if t.reason == "emergency_stop" else ""
             fill_price = getattr(t, "fill_price", None)
             price_str = f" @ {_fmt_money(fill_price)}" if fill_price is not None else ""
+            # 총자산(NAV) 변화 — 통화 모호성 없는 기준. 현금(주문가능 외화현금)은 그다음 병기.
+            nb = getattr(t, "nav_before", None)
+            na = getattr(t, "nav_after", None)
+            nav_str = (
+                f" · 총자산 {_fmt_money(nb)}→{_fmt_money(na)}"
+                if nb is not None and na is not None else ""
+            )
             bb = getattr(t, "balance_before", None)
             ba = getattr(t, "balance_after", None)
-            bal_str = (
-                f" · 잔고 {_fmt_money(bb)}→{_fmt_money(ba)}"
+            cash_str = (
+                f" · 현금 {_fmt_money(bb)}→{_fmt_money(ba)}"
                 if bb is not None and ba is not None else ""
             )
             lines.append(
                 f"  {t.executed_at} · {verb} {t.ticker} {t.quantity}주{price_str}"
-                f" [{t.signal}]{mark}{bal_str}"
+                f" [{t.signal}]{mark}{nav_str}{cash_str}"
             )
         return "\n".join(lines)
 
@@ -361,6 +368,15 @@ class CommandRouter:
         self._deps.store.set_trading_mode("real")
         return "🔴 실전 모드로 전환했습니다. 실제 자금이 거래됩니다."
 
+    def _nav(self) -> Optional[float]:
+        """현재 총자산(USD) — nav_provider best-effort. 미주입·실패 시 None."""
+        if not self._deps.nav_provider:
+            return None
+        try:
+            return self._deps.nav_provider()
+        except Exception:
+            return None
+
     # ----- 비상 정지 (#14) -----
     def _emergency_stop(self, chat_id: int) -> str:
         self._pending[chat_id] = _Pending(kind="estop_confirm")
@@ -389,6 +405,7 @@ class CommandRouter:
         #    청산 도중 프로세스가 죽어도 '일시정지 + 일부청산'이라는 안전한 실패 모드가 되어
         #    다음 월말 재매수가 차단된다(User Story 38). execute("CASH") 는 멱등이라 재실행으로 마무리 가능.
         self._deps.store.set_paused(True)
+        nav_before = self._nav()  # 청산 직전 총자산(best-effort — 실패 시 None → /log 표시 생략)
         try:
             transition = self._deps.liquidator()
         except Exception:
@@ -402,6 +419,8 @@ class CommandRouter:
             signal="CASH",
             legs=transition.legs,
             reason="emergency_stop",
+            nav_before=nav_before,
+            nav_after=self._nav(),  # 청산 접수 직후 총자산(매도→현금이라 값 보존, 근사)
         )
         return self._format_liquidation(transition)
 

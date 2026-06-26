@@ -156,6 +156,19 @@ def test_log_shows_fill_price_and_balance_change(router, store):
     assert "$1,000.00→$877.50" in out       # 잔고 변화(전→후)
 
 
+def test_log_shows_nav_and_cash_when_present(router, store):
+    # 총자산(NAV)과 현금을 함께 표시 — 원화 자동환전으로 현금만 보면 어긋나 보이던 혼란 해소.
+    store.trades = [
+        TradeRecord("2026-06-30 00:10", "real", "NASDAQ", "BUY", "QQQM", 324, "monthly_signal",
+                    fill_price=300.56, balance_before=99382.95, balance_after=998.50,
+                    nav_before=99382.95, nav_after=98379.94),
+    ]
+    out = router.handle("/log", 42)
+    assert "총자산 $99,382.95→$98,379.94" in out
+    assert "현금 $99,382.95→$998.50" in out
+    assert "잔고" not in out                 # 옛 라벨은 더 이상 쓰지 않음
+
+
 def test_log_omits_fill_price_and_balance_when_none(router, store):
     store.trades = [
         TradeRecord("2026-05-31 00:10", "real", "NASDAQ", "BUY", "QQQM", 3, "monthly_signal"),
